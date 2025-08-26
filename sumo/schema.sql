@@ -7,14 +7,24 @@ CREATE TABLE basho (
 );
 
 -- Table for Rikishi (wrestlers)
+
 CREATE TABLE rikishi (
     id INTEGER PRIMARY KEY,
     name TEXT,
-    height_cm INTEGER,
-    weight_kg INTEGER,
     rank TEXT,
     debut_date DATE,
     birth_date DATE
+);
+
+-- Table for Rikishi measurements (height, weight per basho)
+CREATE TABLE measurement (
+    id INTEGER PRIMARY KEY,
+    rikishi_id INTEGER,
+    basho_id INTEGER,
+    height_cm INTEGER,
+    weight_kg INTEGER,
+    FOREIGN KEY (rikishi_id) REFERENCES rikishi(id),
+    FOREIGN KEY (basho_id) REFERENCES basho(id)
 );
 
 -- Table for Basho participation (which rikishi participated in which basho, with their rank for that basho)
@@ -22,6 +32,7 @@ CREATE TABLE basho_rikishi (
     basho_id INTEGER,
     rikishi_id INTEGER,
     rank TEXT,
+    division TEXT,
     PRIMARY KEY (basho_id, rikishi_id),
     FOREIGN KEY (basho_id) REFERENCES basho(id),
     FOREIGN KEY (rikishi_id) REFERENCES rikishi(id)
