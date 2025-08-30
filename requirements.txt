@@ -1,3 +1,4 @@
 requests
 ruff
 black
+tqdm
