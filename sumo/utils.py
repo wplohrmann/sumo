@@ -9,7 +9,7 @@ CACHE_PATH = ".cache"
 
 def fetch(path: str) -> Dict[str, Any]:
     url = f"{BASE_URL}{path}"
-    cache_path = os.path.join(CACHE_PATH, path + ".json")
+    cache_path = os.path.join(CACHE_PATH, path.removeprefix("/") + ".json")
     if os.path.exists(cache_path):
         with open(cache_path) as f:
             return json.load(f)

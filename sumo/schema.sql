@@ -8,7 +8,6 @@ CREATE TABLE basho (
 CREATE TABLE rikishi (
     id INTEGER PRIMARY KEY,
     name TEXT,
-    rank TEXT,
     debut_date DATE,
     birth_date DATE
 );
@@ -27,6 +26,7 @@ CREATE TABLE basho_rikishi (
     basho_id INTEGER,
     rikishi_id INTEGER,
     rank TEXT,
+    rank_value INTEGER,
     division TEXT,
     PRIMARY KEY (basho_id, rikishi_id),
     FOREIGN KEY (basho_id) REFERENCES basho(id),
@@ -35,7 +35,7 @@ CREATE TABLE basho_rikishi (
 
 -- Table for Matches
 CREATE TABLE match (
-    id INTEGER PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     basho_id INTEGER,
     rikishi1_id INTEGER,
     rikishi2_id INTEGER,

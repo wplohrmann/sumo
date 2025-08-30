@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from typing import List, Dict, Any
+from typing import List, Dict, Any, cast
 import logging
 from tqdm import tqdm
 
@@ -34,6 +34,7 @@ def maybe_insert_basho(conn: sqlite3.Connection, basho_id: str) -> None:
         "INSERT OR IGNORE INTO basho (id, name, start_date, end_date) VALUES (?, ?, ?, ?)",
         (basho_id, basho.get("location"), basho.get("startDate"), basho.get("endDate")),
     )
+    conn.commit()
 
 
 def maybe_insert_basho_rikishi(
@@ -46,45 +47,50 @@ def maybe_insert_basho_rikishi(
     if exists:
         return
     data = fetch(f"/basho/{basho_id}/banzuke/{division}")
-    for rikishi in data.get("rikishi", []):
-        conn.execute(
-            "INSERT OR IGNORE INTO basho_rikishi (basho_id, rikishi_id, rank, division) VALUES (?, ?, ?, ?)",
-            (
-                basho_id,
-                rikishi.get("id"),
-                rikishi.get("rank"),
-                division,
-            ),
-        )
+    for side in ["east", "west"]:
+        for rikishi in data[side]:
+            conn.execute(
+                "INSERT OR IGNORE INTO basho_rikishi (basho_id, rikishi_id, rank, rank_value, division) VALUES (?, ?, ?, ?, ?)",
+                (
+                    basho_id,
+                    rikishi["rikishiID"],
+                    rikishi["rank"],
+                    rikishi["rankValue"],
+                    division,
+                ),
+            )
+            conn.commit()
 
 
 def maybe_insert_rikishi_details(conn: sqlite3.Connection, basho_id: str) -> None:
-    rikishi_this_basho = conn.execute(
+    rikishi_this_basho = [x[0] for x in conn.execute(
         "SELECT rikishi_id FROM basho_rikishi WHERE basho_id = ?", (basho_id,)
-    ).fetchall()
-    already_exists = conn.execute(
-        "SELECT id FROM rikishi WHERE basho_id = ?", (basho_id,)
-    ).fetchall()
-    to_fetch = set(rikishi_this_basho) - set(already_exists)
-
-    for rikishi_id in to_fetch:
+    ).fetchall()]
+    for rikishi_id in tqdm(rikishi_this_basho, desc="Rikishi Details"):
+        already_exists = conn.execute(
+            "SELECT id FROM rikishi WHERE id = ?", (rikishi_id,)
+        ).fetchall()
+        if already_exists:
+            continue
         data = fetch(f"/rikishi/{rikishi_id}")
         conn.execute(
-            "INSERT OR IGNORE INTO rikishi (id, name, rank, debut_date, birth_date) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO rikishi (id, name, debut_date, birth_date) VALUES (?, ?, ?, ?)",
             (
                 data.get("id"),
-                data.get("name"),
-                data.get("rank"),
+                data.get("shikonaEn"),
                 data.get("debut"),
                 data.get("birthDate"),
             ),
         )
+        conn.commit()
 
 
 def maybe_insert_measurements(conn: sqlite3.Connection, basho_id: str) -> None:
     logging.info(f"Fetching measurements for basho {basho_id}")
-    data = fetch(f"/measurements?bashoId={basho_id}")
-    measurements: List[Dict[str, Any]] = data.get("measurements", [])
+    exists = conn.execute("SELECT 1 FROM measurement WHERE basho_id = ?", (basho_id,)).fetchone()
+    if exists:
+        return
+    measurements = cast(list[Any], fetch(f"/measurements?bashoId={basho_id}"))
     for m in measurements:
         conn.execute(
             "INSERT OR IGNORE INTO measurement (rikishi_id, basho_id, height_cm, weight_kg) VALUES (?, ?, ?, ?)",
@@ -95,30 +101,27 @@ def maybe_insert_measurements(conn: sqlite3.Connection, basho_id: str) -> None:
                 m.get("weight"),
             ),
         )
-        conn.commit()  # Commit after measurement writes
+        conn.commit()
 
 
 def maybe_insert_matches(
     conn: sqlite3.Connection, basho_id: str, division: str, day: int
 ) -> None:
-    logging.info(
-        f"Fetching matches for basho {basho_id}, division {division}, day {day}"
-    )
     row = conn.execute(
         "SELECT start_date FROM basho WHERE id = ?", (basho_id,)
     ).fetchone()
-    start_date = datetime.strptime(row[0], "%Y-%m-%d")
+    start_date = datetime.fromisoformat(row[0])
     match_data: Dict[str, Any] = fetch(f"/basho/{basho_id}/torikumi/{division}/{day}")
     for match in match_data.get("torikumi", []):
         conn.execute(
-            "INSERT OR IGNORE INTO match (id, basho_id, rikishi1_id, rikishi2_id, winner_id, kimarite, day, match_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO match (id, basho_id, rikishi1_id, rikishi2_id, winner_id, kimarite, day, match_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                match.get("id"),
+                match["id"],
                 basho_id,
-                match.get("eastId"),
-                match.get("westId"),
-                match.get("winnerId"),
-                match.get("kimarite"),
+                match["eastId"],
+                match["westId"],
+                match["winnerId"],
+                match["kimarite"],
                 day,
                 start_date + timedelta(days=day - 1),
             ),
