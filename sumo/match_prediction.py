@@ -1,35 +1,43 @@
 # Elo-type model with mean/variance distributions for rikishi
 # Train-test split by basho date, prediction, and evaluation
 import sqlite3
-import numpy as np
 from collections import defaultdict
-from typing import List, Tuple, Dict, DefaultDict
+from typing import DefaultDict
+from dataclasses import dataclass
+
 
 DB_PATH = "sumo/sumo.db"
 
-from typing import List, Tuple, Dict
+@dataclass
+class Match:
+	id: str
+	basho_id: int
+	rikishi1_id: int
+	rikishi2_id: int
+	winner_id: int
+	day: int
 
-def load_matches_and_basho_dates(db_path: str) -> Tuple[List[Tuple[str, int, int, int, int, int]], Dict[int, str]]:
+
+def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, str]]:
 	conn = sqlite3.connect(db_path)
 	c = conn.cursor()
 	# Get basho dates
 	c.execute("SELECT id, start_date FROM basho")
 	basho_dates = {row[0]: row[1] for row in c.fetchall()}
 	# Get matches
-	c.execute("SELECT id, basho_id, rikishi1_id, rikishi2_id, winner_id, day FROM match ORDER BY match_date, day")
-	matches = c.fetchall()
+	c.execute("SELECT id, basho_id, rikishi1_id, rikishi2_id, winner_id, day FROM match")
+	matches = sorted([Match(*row) for row in c.fetchall()], key=lambda m: (basho_dates[m.basho_id], m.day))
 	conn.close()
 	return matches, basho_dates
 
 def train_test_split(
-	matches: List[Tuple[str, int, int, int, int, int]],
-	basho_dates: Dict[int, str],
+	matches: list[Match],
+	basho_dates: dict[int, str],
 	split_date: str
-) -> Tuple[List[Tuple[str, int, int, int, int, int]], List[Tuple[str, int, int, int, int, int]]]:
+) -> tuple[list[Match], list[Match]]:
 	train, test = [], []
 	for m in matches:
-		basho_id = m[1]
-		date = basho_dates[basho_id]
+		date = basho_dates[m.basho_id]
 		if date < split_date:
 			train.append(m)
 		else:
@@ -60,15 +68,17 @@ class EloModel:
 		self.stats[rikishi1] = new_mean1
 		self.stats[rikishi2] = new_mean2
 
-def evaluate(model, matches: List[Tuple[str, int, int, int, int, int]]) -> float:
+def sort_matches(matches: list[Match]) -> list[Match]:
+	return sorted(matches, key=lambda x: (x.basho_id, x.day))
+
+def evaluate(model, matches: list[Match]) -> float:
 	correct = 0
-	for m in matches:
-		_, _, rikishi1, rikishi2, winner, _ = m
-		pred = model.predict(rikishi1, rikishi2)
-		if pred == winner:
+	for m in sort_matches(matches):
+		pred = model.predict(m.rikishi1_id, m.rikishi2_id)
+		if pred == m.winner_id:
 			correct += 1
 		# Update Elo after prediction
-		model.update(rikishi1, rikishi2, winner)
+		model.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
 	return correct / len(matches) if matches else 0
 
 def main() -> None:
@@ -95,9 +105,7 @@ def main() -> None:
 		print(f"Best K: {best_K} => Train accuracy: {best_acc:.3f}")
 		# Final evaluation with best K
 		final_model = EloModel(K=best_K)
-		for m in train:
-			_, _, rikishi1, rikishi2, winner, _ = m
-			final_model.update(rikishi1, rikishi2, winner)
+		evaluate(final_model, train)
 		final_acc = evaluate(final_model, test)
 		print(f"Final evaluation with best K: Test accuracy: {final_acc:.3f} ({len(test)} matches)")
 	else:
