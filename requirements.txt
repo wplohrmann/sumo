@@ -3,3 +3,7 @@ ruff
 black
 tqdm
 dvc[gdrive]
+numpy
+tabulate
+xgboost
+scikit-learn
