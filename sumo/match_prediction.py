@@ -37,12 +37,9 @@ def train_test_split(
 	return train, test
 
 class EloModel:
-	stats: DefaultDict[int, float]
-	K: int
-
-	def __init__(self, initial_mean: float = 1500):
-		self.stats: DefaultDict[int, float] = defaultdict(lambda: initial_mean)
-		self.K = 32
+	def __init__(self, K: float):
+		self.stats: DefaultDict[int, float] = defaultdict(lambda: 1500)
+		self.K = K
 
 	def predict(self, rikishi1: int, rikishi2: int) -> int:
 		mean1 = self.stats[rikishi1]
@@ -52,42 +49,59 @@ class EloModel:
 	def update(self, rikishi1: int, rikishi2: int, winner: int) -> None:
 		mean1 = self.stats[rikishi1]
 		mean2 = self.stats[rikishi2]
-		# Expected score
+
 		exp1 = 1 / (1 + 10 ** ((mean2 - mean1) / 400))
 		exp2 = 1 - exp1
-		# Actual score
 		s1 = 1 if winner == rikishi1 else 0
 		s2 = 1 - s1
-		# Update mean
+
 		new_mean1 = mean1 + self.K * (s1 - exp1)
 		new_mean2 = mean2 + self.K * (s2 - exp2)
 		self.stats[rikishi1] = new_mean1
 		self.stats[rikishi2] = new_mean2
 
 def evaluate(model, matches: List[Tuple[str, int, int, int, int, int]]) -> float:
-    correct = 0
-    for m in matches:
-        _, _, rikishi1, rikishi2, winner, _ = m
-        pred = model.predict(rikishi1, rikishi2)
-        if pred == winner:
-            correct += 1
-        # Update Elo after prediction
-        model.update(rikishi1, rikishi2, winner)
-    return correct / len(matches) if matches else 0
+	correct = 0
+	for m in matches:
+		_, _, rikishi1, rikishi2, winner, _ = m
+		pred = model.predict(rikishi1, rikishi2)
+		if pred == winner:
+			correct += 1
+		# Update Elo after prediction
+		model.update(rikishi1, rikishi2, winner)
+	return correct / len(matches) if matches else 0
 
 def main() -> None:
 	matches, basho_dates = load_matches_and_basho_dates(DB_PATH)
-	# Choose split date (e.g., '2023-01-01')
 	split_date = '2023-01-01'
 	train, test = train_test_split(matches, basho_dates, split_date)
-	model = EloModel()
-	# Train
-	for m in train:
-		_, _, rikishi1, rikishi2, winner, _ = m
-		model.update(rikishi1, rikishi2, winner)
-	# Evaluate
-	acc = evaluate(model, test)
-	print(f"Test accuracy: {acc:.3f} ({len(test)} matches)")
+
+	# Parameter grid
+	K_values = [8, 16, 32, 64, 128, 256, 512]
+
+	best_acc = -1
+	best_K = None
+
+	for K in K_values:
+		# Train new model for each K
+		model = EloModel(K=K)
+		acc = evaluate(model, train)
+		print(f"Params: K={K} => Train accuracy: {acc:.3f}")
+		if acc > best_acc:
+			best_acc = acc
+			best_K = K
+
+	if best_K is not None:
+		print(f"Best K: {best_K} => Train accuracy: {best_acc:.3f}")
+		# Final evaluation with best K
+		final_model = EloModel(K=best_K)
+		for m in train:
+			_, _, rikishi1, rikishi2, winner, _ = m
+			final_model.update(rikishi1, rikishi2, winner)
+		final_acc = evaluate(final_model, test)
+		print(f"Final evaluation with best K: Test accuracy: {final_acc:.3f} ({len(test)} matches)")
+	else:
+		print("No best K found. Please check your data or parameter grid.")
 
 if __name__ == "__main__":
 	main()
