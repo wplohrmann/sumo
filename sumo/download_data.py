@@ -65,9 +65,12 @@ def maybe_insert_basho_rikishi(
 
 
 def maybe_insert_rikishi_details(conn: sqlite3.Connection, basho_id: str) -> None:
-    rikishi_this_basho = [x[0] for x in conn.execute(
-        "SELECT rikishi_id FROM basho_rikishi WHERE basho_id = ?", (basho_id,)
-    ).fetchall()]
+    rikishi_this_basho = [
+        x[0]
+        for x in conn.execute(
+            "SELECT rikishi_id FROM basho_rikishi WHERE basho_id = ?", (basho_id,)
+        ).fetchall()
+    ]
     for rikishi_id in tqdm(rikishi_this_basho, desc="Rikishi Details"):
         already_exists = conn.execute(
             "SELECT id FROM rikishi WHERE id = ?", (rikishi_id,)
@@ -89,7 +92,9 @@ def maybe_insert_rikishi_details(conn: sqlite3.Connection, basho_id: str) -> Non
 
 def maybe_insert_measurements(conn: sqlite3.Connection, basho_id: str) -> None:
     logging.info(f"Fetching measurements for basho {basho_id}")
-    exists = conn.execute("SELECT 1 FROM measurement WHERE basho_id = ?", (basho_id,)).fetchone()
+    exists = conn.execute(
+        "SELECT 1 FROM measurement WHERE basho_id = ?", (basho_id,)
+    ).fetchone()
     if exists:
         return
     measurements = cast(list[Any], fetch(f"/measurements?bashoId={basho_id}"))
