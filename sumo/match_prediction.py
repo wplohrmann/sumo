@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import xgboost as xgb
 from sklearn.metrics import accuracy_score
 import numpy as np
+from abc import ABC, abstractmethod
 
 
 DB_PATH = "sumo/sumo.db"
@@ -53,10 +54,27 @@ def train_test_split(
     return train, test
 
 
-class EloModel:
+class BaseModel(ABC):
+    @abstractmethod
+    def fit(self, matches: list[Match]):
+        pass
+
+    @abstractmethod
+    def predict(self, rikishi1: int, rikishi2: int) -> int:
+        pass
+
+    @abstractmethod
+    def evaluate(self, matches: list[Match]) -> float:
+        pass
+
+class EloModel(BaseModel):
     def __init__(self, K: float):
         self.stats: DefaultDict[int, float] = defaultdict(lambda: 1500)
         self.K = K
+
+    def fit(self, matches: list[Match]):
+        for m in sort_matches(matches):
+            self.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
 
     def predict(self, rikishi1: int, rikishi2: int) -> int:
         mean1 = self.stats[rikishi1]
@@ -77,22 +95,47 @@ class EloModel:
         self.stats[rikishi1] = new_mean1
         self.stats[rikishi2] = new_mean2
 
+    def evaluate(self, matches: list[Match]) -> float:
+        # Use a fresh model for evaluation
+        correct = 0
+        for m in sort_matches(matches):
+            pred = self.predict(m.rikishi1_id, m.rikishi2_id)
+            if pred == m.winner_id:
+                correct += 1
+            self.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
+        return correct / len(matches) if matches else 0
+
+class XGBoostModel(BaseModel):
+    def __init__(self):
+        self.model = xgb.XGBClassifier(eval_metric='logloss')
+        self.is_fitted = False
+
+    def fit(self, matches: list[Match]):
+        X, y = extract_features(matches)
+        self.model.fit(X, y)
+        self.is_fitted = True
+
+    def predict(self, rikishi1: int, rikishi2: int) -> int:
+        if not self.is_fitted:
+            raise ValueError("Model not fitted.")
+        X = np.array([[rikishi1, rikishi2]])
+        pred = self.model.predict(X)[0]
+        return rikishi1 if pred == 1 else rikishi2
+
+    def evaluate(self, matches: list[Match]) -> float:
+        X, y = extract_features(matches)
+        y_pred = self.model.predict(X)
+        acc = float(accuracy_score(y, y_pred))
+        return acc
+
 
 def sort_matches(matches: list[Match]) -> list[Match]:
     return sorted(matches, key=lambda x: (x.basho_id, x.day))
 
 
-def evaluate(model, matches: list[Match]) -> float:
-    correct = 0
-    for m in sort_matches(matches):
-        pred = model.predict(m.rikishi1_id, m.rikishi2_id)
-        if pred == m.winner_id:
-            correct += 1
-        # Update Elo after prediction
-        model.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
-    return correct / len(matches) if matches else 0
 
-def extract_features(matches):
+
+def extract_features(matches: list[Match]) -> tuple[np.ndarray, np.ndarray]:
     # Simple features: rikishi1_id, rikishi2_id
     X = np.array([[m.rikishi1_id, m.rikishi2_id] for m in matches])
     y = np.array([m.winner_id == m.rikishi1_id for m in matches], dtype=int)
@@ -111,9 +154,8 @@ def main() -> None:
     best_K = None
 
     for K in K_values:
-        # Train new model for each K
         model = EloModel(K=K)
-        acc = evaluate(model, train)
+        acc = model.evaluate(train)
         print(f"Params: K={K} => Train accuracy: {acc:.3f}")
         if acc > best_acc:
             best_acc = acc
@@ -121,23 +163,15 @@ def main() -> None:
 
     assert best_K is not None
     print(f"Best K: {best_K} => Train accuracy: {best_acc:.3f}")
-    # Final evaluation with best K
     final_model = EloModel(K=best_K)
-    evaluate(final_model, train)
-    final_acc = evaluate(final_model, test)
-    print(
-        f"Final evaluation with best K: Test accuracy: {final_acc:.3f} ({len(test)} matches)"
-    )
+    final_model.fit(train)
+    final_acc = final_model.evaluate(test)
+    print(f"Final evaluation with best K: Test accuracy: {final_acc:.3f} ({len(test)} matches)")
 
-
-    X_train, y_train = extract_features(train)
-    X_test, y_test = extract_features(test)
-    xgb_model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss')
-    xgb_model.fit(X_train, y_train)
-    y_pred = xgb_model.predict(X_test)
-    xgb_acc = accuracy_score(y_test, y_pred)
+    xgb_model = XGBoostModel()
+    xgb_model.fit(train)
+    xgb_acc = xgb_model.evaluate(test)
     print(f"XGBoost Classifier Test accuracy: {xgb_acc:.3f} ({len(test)} matches)")
-
 
 if __name__ == "__main__":
     main()
