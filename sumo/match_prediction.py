@@ -4,6 +4,9 @@ import sqlite3
 from collections import defaultdict
 from typing import DefaultDict
 from dataclasses import dataclass
+import xgboost as xgb
+from sklearn.metrics import accuracy_score
+import numpy as np
 
 
 DB_PATH = "sumo/sumo.db"
@@ -89,6 +92,12 @@ def evaluate(model, matches: list[Match]) -> float:
         model.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
     return correct / len(matches) if matches else 0
 
+def extract_features(matches):
+    # Simple features: rikishi1_id, rikishi2_id
+    X = np.array([[m.rikishi1_id, m.rikishi2_id] for m in matches])
+    y = np.array([m.winner_id == m.rikishi1_id for m in matches], dtype=int)
+    return X, y
+
 
 def main() -> None:
     matches, basho_dates = load_matches_and_basho_dates(DB_PATH)
@@ -119,6 +128,15 @@ def main() -> None:
     print(
         f"Final evaluation with best K: Test accuracy: {final_acc:.3f} ({len(test)} matches)"
     )
+
+
+    X_train, y_train = extract_features(train)
+    X_test, y_test = extract_features(test)
+    xgb_model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss')
+    xgb_model.fit(X_train, y_train)
+    y_pred = xgb_model.predict(X_test)
+    xgb_acc = accuracy_score(y_test, y_pred)
+    print(f"XGBoost Classifier Test accuracy: {xgb_acc:.3f} ({len(test)} matches)")
 
 
 if __name__ == "__main__":
