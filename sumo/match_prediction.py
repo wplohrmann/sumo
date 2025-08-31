@@ -12,6 +12,7 @@ from tabulate import tabulate
 DB_PATH = "sumo/sumo.db"
 
 
+
 @dataclass
 class Match:
     id: str
@@ -20,6 +21,11 @@ class Match:
     rikishi2_id: int
     winner_id: int
     day: int
+    rikishi1_height: int
+    rikishi1_weight: int
+    rikishi2_height: int
+    rikishi2_weight: int
+
 
 
 def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, str]]:
@@ -28,9 +34,15 @@ def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, s
     # Get basho dates
     c.execute("SELECT id, start_date FROM basho")
     basho_dates = {row[0]: row[1] for row in c.fetchall()}
-    # Get matches
+    # Get matches with height/weight for each rikishi in that basho
     c.execute(
-        "SELECT id, basho_id, rikishi1_id, rikishi2_id, winner_id, day FROM match"
+        """
+        SELECT m.id, m.basho_id, m.rikishi1_id, m.rikishi2_id, m.winner_id, m.day,
+               m1.height_cm, m1.weight_kg, m2.height_cm, m2.weight_kg
+        FROM match m
+        LEFT JOIN measurement m1 ON m.rikishi1_id = m1.rikishi_id AND m.basho_id = m1.basho_id
+        LEFT JOIN measurement m2 ON m.rikishi2_id = m2.rikishi_id AND m.basho_id = m2.basho_id
+        """
     )
     matches = sorted(
         [Match(*row) for row in c.fetchall()],
@@ -133,9 +145,20 @@ def sort_matches(matches: list[Match]) -> list[Match]:
     return sorted(matches, key=lambda x: (x.basho_id, x.day))
 
 
+
 def extract_features(matches: list[Match]) -> tuple[np.ndarray, np.ndarray]:
-    # Simple features: rikishi1_id, rikishi2_id
-    X = np.array([[m.rikishi1_id, m.rikishi2_id] for m in matches])
+    # Features: rikishi1_id, rikishi2_id, rikishi1_height, rikishi1_weight, rikishi2_height, rikishi2_weight
+    X = np.array([
+        [
+            m.rikishi1_id,
+            m.rikishi2_id,
+            m.rikishi1_height if m.rikishi1_height is not None else 0,
+            m.rikishi1_weight if m.rikishi1_weight is not None else 0,
+            m.rikishi2_height if m.rikishi2_height is not None else 0,
+            m.rikishi2_weight if m.rikishi2_weight is not None else 0,
+        ]
+        for m in matches
+    ])
     y = np.array([m.winner_id == m.rikishi1_id for m in matches], dtype=int)
     return X, y
 

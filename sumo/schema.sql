@@ -48,3 +48,13 @@ CREATE TABLE match (
     FOREIGN KEY (rikishi2_id) REFERENCES rikishi(id),
     FOREIGN KEY (winner_id) REFERENCES rikishi(id)
 );
+
+-- Indices to improve join/query performance
+CREATE INDEX idx_measurement_rikishi_id ON measurement(rikishi_id);
+CREATE INDEX idx_measurement_basho_id ON measurement(basho_id);
+CREATE INDEX idx_basho_rikishi_basho_id ON basho_rikishi(basho_id);
+CREATE INDEX idx_basho_rikishi_rikishi_id ON basho_rikishi(rikishi_id);
+CREATE INDEX idx_match_basho_id ON match(basho_id);
+CREATE INDEX idx_match_rikishi1_id ON match(rikishi1_id);
+CREATE INDEX idx_match_rikishi2_id ON match(rikishi2_id);
+CREATE INDEX idx_match_winner_id ON match(winner_id);
