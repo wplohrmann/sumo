@@ -48,6 +48,8 @@ def maybe_insert_basho_rikishi(
         return
     data = fetch(f"/basho/{basho_id}/banzuke/{division}")
     for side in ["east", "west"]:
+        if data[side] is None:
+            continue
         for rikishi in data[side]:
             conn.execute(
                 "INSERT OR IGNORE INTO basho_rikishi (basho_id, rikishi_id, rank, rank_value, division) VALUES (?, ?, ?, ?, ?)",
@@ -159,5 +161,5 @@ def main(basho_ids: List[str]) -> None:
 
 
 if __name__ == "__main__":
-    basho_ids = bashos[:1]
+    basho_ids = bashos
     main(basho_ids)

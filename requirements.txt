@@ -2,3 +2,4 @@ requests
 ruff
 black
 tqdm
+dvc[gdrive]

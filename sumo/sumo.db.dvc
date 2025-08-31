@@ -1,0 +1,5 @@
+outs:
+- md5: c84e9a7108157e1d675a0f2a03c3cc52
+  size: 276008960
+  hash: md5
+  path: sumo.db
