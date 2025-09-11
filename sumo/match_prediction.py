@@ -13,7 +13,6 @@ from tabulate import tabulate
 DB_PATH = "sumo/sumo.db"
 
 
-
 @dataclass
 class Match:
     id: str
@@ -26,7 +25,8 @@ class Match:
     rikishi1_weight: int
     rikishi2_height: int
     rikishi2_weight: int
-
+    rikishi1_rank: int
+    rikishi2_rank: int
 
 
 def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, str]]:
@@ -37,18 +37,24 @@ def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, s
     basho_dates = {row[0]: row[1] for row in c.fetchall()}
     # Get matches with height/weight for each rikishi in that basho
     matches = []
-    for basho_id in tqdm(sorted(basho_dates.keys()), desc="Loading matches", total=len(basho_dates)):
+    for basho_id in tqdm(
+        sorted(basho_dates.keys()), desc="Loading matches", total=len(basho_dates)
+    ):
         c.execute(
             f"""
             SELECT m.id, m.basho_id, m.rikishi1_id, m.rikishi2_id, m.winner_id, m.day,
-                   m1.height_cm, m1.weight_kg, m2.height_cm, m2.weight_kg
+                   m1.height_cm, m1.weight_kg, m2.height_cm, m2.weight_kg, br1.rank_value, br2.rank_value
             FROM match m
         LEFT JOIN measurement m1 ON m.rikishi1_id = m1.rikishi_id AND m.basho_id = m1.basho_id
         LEFT JOIN measurement m2 ON m.rikishi2_id = m2.rikishi_id AND m.basho_id = m2.basho_id
+        LEFT JOIN basho_rikishi br1 ON m.rikishi1_id = br1.rikishi_id AND m.basho_id = br1.basho_id
+        LEFT JOIN basho_rikishi br2 ON m.rikishi2_id = br2.rikishi_id AND m.basho_id = br2.basho_id
         WHERE m.basho_id = {basho_id}
         """
         )
-        matches.extend(sorted([Match(*row) for row in c.fetchall()], key=lambda x: x.day))
+        matches.extend(
+            sorted([Match(*row) for row in c.fetchall()], key=lambda x: x.day)
+        )
     conn.close()
     return matches, basho_dates
 
@@ -143,24 +149,29 @@ class XGBoostModel(BaseModel):
 
 
 def sort_matches(matches: list[Match]) -> list[Match]:
-    assert all(matches[1+1].basho_id > matches[i].basho_id or (matches[i+1].basho_id == matches[i].basho_id and matches[i].day >= matches[i].day) for i in range(len(matches)-1))
+    for i in range(len(matches) - 1):
+        assert matches[i].basho_id < matches[i + 1].basho_id or (
+            matches[i].basho_id == matches[i + 1].basho_id
+            and matches[i].day <= matches[i + 1].day
+        ), breakpoint()
     return matches
-
 
 
 def extract_features(matches: list[Match]) -> tuple[np.ndarray, np.ndarray]:
     # Features: rikishi1_id, rikishi2_id, rikishi1_height, rikishi1_weight, rikishi2_height, rikishi2_weight
-    X = np.array([
+    X = np.array(
         [
-            m.rikishi1_id,
-            m.rikishi2_id,
-            m.rikishi1_height if m.rikishi1_height is not None else 0,
-            m.rikishi1_weight if m.rikishi1_weight is not None else 0,
-            m.rikishi2_height if m.rikishi2_height is not None else 0,
-            m.rikishi2_weight if m.rikishi2_weight is not None else 0,
+            [
+                m.rikishi1_id,
+                m.rikishi2_id,
+                m.rikishi1_height if m.rikishi1_height is not None else 0,
+                m.rikishi1_weight if m.rikishi1_weight is not None else 0,
+                m.rikishi2_height if m.rikishi2_height is not None else 0,
+                m.rikishi2_weight if m.rikishi2_weight is not None else 0,
+            ]
+            for m in matches
         ]
-        for m in matches
-    ])
+    )
     y = np.array([m.winner_id == m.rikishi1_id for m in matches], dtype=int)
     return X, y
 
@@ -176,7 +187,6 @@ if __name__ == "__main__":
         EloModel(K=32),
         EloModel(K=64),
         EloModel(K=128),
-        XGBoostModel(),
     ]
     accs = {}
     for model in tqdm(models, desc="Training models"):
@@ -187,6 +197,125 @@ if __name__ == "__main__":
     print(f"Train/test split: {len(train)}/{len(test)} matches")
     rows = [
         [name, f"{train_acc:.3f}", f"{test_acc:.3f}"]
-        for name, (train_acc, test_acc) in sorted(accs.items(), key=lambda x: x[1][1], reverse=True)
+        for name, (train_acc, test_acc) in sorted(
+            accs.items(), key=lambda x: x[1][1], reverse=True
+        )
     ]
-    print(tabulate(rows, headers=["Model", "Train Accuracy", "Test Accuracy"], tablefmt="github"))
+    print(
+        tabulate(
+            rows,
+            headers=["Model", "Train Accuracy", "Test Accuracy"],
+            tablefmt="github",
+        )
+    )
+    rikishi_names = {}
+    name_query = "SELECT id, name FROM rikishi"
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(name_query)
+    for row in c.fetchall():
+        rikishi_names[row[0]] = row[1]
+    conn.close()
+    elos = sorted(models[3].stats.items(), key=lambda x: x[1], reverse=True)
+    for rank, (rikishi_id, elo) in enumerate(elos[:50], start=1):
+        print(f"{rank:2d}. {rikishi_names[rikishi_id]:20s} {elo:.1f}")
+
+# --- XGBoost regression for net wins prediction ---
+import matplotlib.pyplot as plt
+from collections import defaultdict
+from xgboost import XGBRegressor
+
+# 1. Aggregate per-basho stats: starting rank, starting Elo, net wins
+def aggregate_basho_stats(matches, elo_model):
+    # For each (basho_id, rikishi_id):
+    #   - starting rank (first match in basho)
+    #   - starting Elo (before first match in basho)
+    #   - net wins (wins - losses in basho)
+    net_wins = defaultdict(int)
+    first_match = {}
+    for m in sort_matches(matches):
+        for rikishi_id, rank in [(m.rikishi1_id, m.rikishi1_rank), (m.rikishi2_id, m.rikishi2_rank)]:
+            key = (m.basho_id, rikishi_id)
+            if key not in first_match:
+                first_match[key] = (rank, elo_model.stats[rikishi_id])
+        # Update net wins
+        if m.winner_id == m.rikishi1_id:
+            net_wins[(m.basho_id, m.rikishi1_id)] += 1
+            net_wins[(m.basho_id, m.rikishi2_id)] -= 1
+        else:
+            net_wins[(m.basho_id, m.rikishi2_id)] += 1
+            net_wins[(m.basho_id, m.rikishi1_id)] -= 1
+        # Update Elo after match
+        elo_model.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
+    # Build feature/target arrays
+    X, y = [], []
+    for key in first_match:
+        rank, elo = first_match[key]
+        nw = net_wins[key]
+        if rank is not None and elo is not None:
+            X.append([rank, elo])
+            y.append(nw)
+    return np.array(X), np.array(y)
+
+# Use all matches for regression (or split if desired)
+elo_model = EloModel(K=64)
+X, y = aggregate_basho_stats(matches, elo_model)
+
+# 2. Train/test split (80/20)
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# 3. Train XGBoost regressor
+reg = XGBRegressor(objective='reg:squarederror', random_state=42)
+reg.fit(X_train, y_train)
+y_pred = reg.predict(X_train)
+
+# 4. Scatter plot: true vs predicted net wins
+plt.figure(figsize=(7,7))
+plt.scatter(y_train, y_pred, alpha=0.6)
+plt.xlabel('True Net Wins')
+plt.ylabel('Predicted Net Wins')
+plt.title('XGBoost: True vs Predicted Net Wins per Basho')
+plt.plot([min(y_train), max(y_train)], [min(y_train), max(y_train)], 'r--')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+# --- Predict wins for makuuchi rikishi in the most recent basho ---
+def get_makuuchi_rikishi_for_basho(basho_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT rikishi_id, rank_value FROM basho_rikishi
+        WHERE basho_id = ? AND division = 'Makuuchi'""", (basho_id,))
+    result = c.fetchall()
+    conn.close()
+    return result  # list of (rikishi_id, rank_value)
+
+# Find the most recent basho
+latest_basho_id = max(basho_dates.keys(), key=lambda k: basho_dates[k])
+makuuchi_rikishi = get_makuuchi_rikishi_for_basho(latest_basho_id)
+
+# Get starting Elo for each rikishi in that basho (using Elo after all previous matches)
+elo_model = EloModel(K=64)
+for m in sort_matches(matches):
+    if m.basho_id == latest_basho_id:
+        break
+    elo_model.update(m.rikishi1_id, m.rikishi2_id, m.winner_id)
+
+rows = []
+for rikishi_id, rank_value in makuuchi_rikishi:
+    starting_elo = elo_model.stats[rikishi_id]
+    X_pred = np.array([[rank_value, starting_elo]])
+    pred_wins = reg.predict(X_pred)[0]
+    name = rikishi_names.get(rikishi_id, str(rikishi_id))
+    rows.append((name, rank_value, starting_elo, pred_wins))
+
+rows.sort(key=lambda x: -x[3])  # sort by predicted wins descending
+print(f"\nPredicted wins for makuuchi division ({basho_dates[latest_basho_id]}):")
+print(tabulate(
+    [(name, f"{rank}", f"{elo:.1f}", f"{wins:.2f}") for name, rank, elo, wins in sorted(rows, key=lambda x: -x[3])],
+    headers=["Rikishi", "Rank Value", "Starting Elo", "Predicted Wins"],
+    tablefmt="github"
+))
+
