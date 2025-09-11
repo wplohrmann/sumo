@@ -2,6 +2,7 @@ import sqlite3
 from collections import defaultdict
 from typing import DefaultDict
 from dataclasses import dataclass
+from tqdm import tqdm
 import xgboost as xgb
 from sklearn.metrics import accuracy_score
 import numpy as np
@@ -35,19 +36,19 @@ def load_matches_and_basho_dates(db_path: str) -> tuple[list[Match], dict[int, s
     c.execute("SELECT id, start_date FROM basho")
     basho_dates = {row[0]: row[1] for row in c.fetchall()}
     # Get matches with height/weight for each rikishi in that basho
-    c.execute(
-        """
-        SELECT m.id, m.basho_id, m.rikishi1_id, m.rikishi2_id, m.winner_id, m.day,
-               m1.height_cm, m1.weight_kg, m2.height_cm, m2.weight_kg
-        FROM match m
+    matches = []
+    for basho_id in tqdm(sorted(basho_dates.keys()), desc="Loading matches", total=len(basho_dates)):
+        c.execute(
+            f"""
+            SELECT m.id, m.basho_id, m.rikishi1_id, m.rikishi2_id, m.winner_id, m.day,
+                   m1.height_cm, m1.weight_kg, m2.height_cm, m2.weight_kg
+            FROM match m
         LEFT JOIN measurement m1 ON m.rikishi1_id = m1.rikishi_id AND m.basho_id = m1.basho_id
         LEFT JOIN measurement m2 ON m.rikishi2_id = m2.rikishi_id AND m.basho_id = m2.basho_id
+        WHERE m.basho_id = {basho_id}
         """
-    )
-    matches = sorted(
-        [Match(*row) for row in c.fetchall()],
-        key=lambda m: (basho_dates[m.basho_id], m.day),
-    )
+        )
+        matches.extend(sorted([Match(*row) for row in c.fetchall()], key=lambda x: x.day))
     conn.close()
     return matches, basho_dates
 
@@ -142,7 +143,8 @@ class XGBoostModel(BaseModel):
 
 
 def sort_matches(matches: list[Match]) -> list[Match]:
-    return sorted(matches, key=lambda x: (x.basho_id, x.day))
+    assert all(matches[1+1].basho_id > matches[i].basho_id or (matches[i+1].basho_id == matches[i].basho_id and matches[i].day >= matches[i].day) for i in range(len(matches)-1))
+    return matches
 
 
 
@@ -177,7 +179,7 @@ if __name__ == "__main__":
         XGBoostModel(),
     ]
     accs = {}
-    for model in models:
+    for model in tqdm(models, desc="Training models"):
         train_accuracy = model.fit(train)
         test_accuracy = model.evaluate(test)
         accs[model.name()] = (train_accuracy, test_accuracy)

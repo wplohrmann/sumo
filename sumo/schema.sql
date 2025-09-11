@@ -13,13 +13,13 @@ CREATE TABLE rikishi (
 );
 
 CREATE TABLE measurement (
-    id INTEGER PRIMARY KEY,
     rikishi_id INTEGER,
     basho_id INTEGER,
     height_cm INTEGER,
     weight_kg INTEGER,
     FOREIGN KEY (rikishi_id) REFERENCES rikishi(id),
     FOREIGN KEY (basho_id) REFERENCES basho(id)
+    PRIMARY KEY (basho_id, rikishi_id)
 );
 
 CREATE TABLE basho_rikishi (
@@ -58,3 +58,4 @@ CREATE INDEX idx_match_basho_id ON match(basho_id);
 CREATE INDEX idx_match_rikishi1_id ON match(rikishi1_id);
 CREATE INDEX idx_match_rikishi2_id ON match(rikishi2_id);
 CREATE INDEX idx_match_winner_id ON match(winner_id);
+CREATE INDEX idx_match_basho_day ON match (basho_id, day);

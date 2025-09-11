@@ -98,6 +98,7 @@ def maybe_insert_measurements(conn: sqlite3.Connection, basho_id: str) -> None:
     if exists:
         return
     measurements = cast(list[Any], fetch(f"/measurements?bashoId={basho_id}"))
+    measurements = [x for x in measurements if x["bashoId"] == basho_id]
     for m in measurements:
         conn.execute(
             "INSERT OR IGNORE INTO measurement (rikishi_id, basho_id, height_cm, weight_kg) VALUES (?, ?, ?, ?)",
