@@ -40,3 +40,19 @@ export function useParticipants(tid: string | undefined) {
     enabled: !!tid,
   });
 }
+
+export function useRikishi(tid: string | undefined) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "rikishi"],
+    queryFn: () => api.listRikishi(tid!),
+    enabled: !!tid,
+  });
+}
+
+export function usePicks(tid: string | undefined) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "picks"],
+    queryFn: () => api.listPicks(tid!),
+    enabled: !!tid,
+  });
+}

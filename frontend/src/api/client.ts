@@ -25,6 +25,37 @@ export interface ParticipantCreated extends Participant {
   token: string;
 }
 
+export interface RikishiRow {
+  rikishi_id: number;
+  name: string | null;
+  rank: string | null;
+  rank_value: number | null;
+  price_pence: number | null;
+}
+
+export interface RosterEntry {
+  id: string;
+  rikishi_id: number;
+  rikishi_name: string | null;
+  purchase_price_pence: number;
+  acquired_via: "draft" | "trade";
+  acquired_before_day: number;
+}
+
+export interface ParticipantRoster {
+  user_id: string;
+  display_name: string;
+  spent_pence: number;
+  remaining_pence: number;
+  entries: RosterEntry[];
+}
+
+export interface RosterBoard {
+  budget_pence: number;
+  roster_size: number;
+  rosters: ParticipantRoster[];
+}
+
 const BASE = "/api";
 
 async function request<T>(
@@ -88,6 +119,25 @@ export const api = {
     request<ParticipantCreated>(`/tournaments/${tid}/participants`, {
       method: "POST",
       body: JSON.stringify({ display_name }),
+    }),
+
+  listRikishi: (tid: string) =>
+    request<RikishiRow[]>(`/tournaments/${tid}/rikishi`),
+  setPrice: (tid: string, rikishi_id: number, price_pence: number) =>
+    request<RikishiRow>(`/tournaments/${tid}/rikishi/${rikishi_id}/price`, {
+      method: "PUT",
+      body: JSON.stringify({ price_pence }),
+    }),
+
+  listPicks: (tid: string) => request<RosterBoard>(`/tournaments/${tid}/picks`),
+  createPick: (tid: string, participant_user_id: string, rikishi_id: number) =>
+    request<RosterEntry>(`/tournaments/${tid}/picks`, {
+      method: "POST",
+      body: JSON.stringify({ participant_user_id, rikishi_id }),
+    }),
+  deletePick: (tid: string, entry_id: string) =>
+    request<void>(`/tournaments/${tid}/picks/${entry_id}`, {
+      method: "DELETE",
     }),
 
   sync: (basho_id: string, days = 15) =>

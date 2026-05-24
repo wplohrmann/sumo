@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import { useCurrentTournament, useParticipants } from "../api/hooks";
+import PricingTable from "../components/PricingTable";
+import PickEntry from "../components/PickEntry";
 
 export default function Admin() {
   const t = useCurrentTournament();
@@ -190,6 +192,26 @@ export default function Admin() {
               ))}
             </ul>
           </section>
+
+          {(t.data.status === "setup" || t.data.status === "drafting") && (
+            <>
+              <section>
+                <h2 className="text-xl font-semibold mb-2">Rikishi pricing</h2>
+                <p className="text-sm text-stone-600 mb-2">
+                  Sync the basho first if the list is empty. Prices are in £ and
+                  saved on blur.
+                </p>
+                <div className="rounded border bg-white p-3 max-h-96 overflow-auto">
+                  <PricingTable tid={t.data.id} />
+                </div>
+              </section>
+
+              <section>
+                <h2 className="text-xl font-semibold mb-2">Record a draft pick</h2>
+                <PickEntry tid={t.data.id} />
+              </section>
+            </>
+          )}
         </>
       )}
     </div>
