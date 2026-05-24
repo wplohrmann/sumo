@@ -14,21 +14,25 @@ as read-only snapshots. The next basho is the primary target.
 For each tournament, every participant picks 4 rikishi from Makuuchi with a
 £55 total budget. Points are awarded as follows:
 
-| Event                                            | Points |
-| ------------------------------------------------ | ------ |
-| Win in a Makuuchi bout (per win, per rikishi)    | 2      |
-| Win where opponent is picked by another player[^1] | 1      |
-| Rikishi reaches the yusho playoff                | 1      |
-| Rikishi wins the yusho (replaces playoff point)  | 2      |
-| Each special prize (sansho) won by a rikishi     | 1      |
+| Event                                                  | Points |
+| ------------------------------------------------------ | ------ |
+| Win in a regular Makuuchi bout (per win, per rikishi)  | 2      |
+| Win where opponent is picked by another player[^1]     | 1      |
+| Rikishi reaches the yusho playoff                      | 1      |
+| Rikishi wins the yusho (replaces playoff point)        | 2      |
+| Each special prize (sansho) won by a rikishi           | 1      |
 
 [^1]: "Scalp" bonus — self-scalps (beating a rikishi you also picked) do not
 count. Two players can both claim the scalp if they each picked the loser
 (but the win itself still scores its own 2 points, unaffected).
 
-The "yusho playoff" rule: a rikishi who finishes day 15 tied for first and
-loses the playoff scores +1; the winner scores +2 (not +1 +2). The base 2/win
-applies to all bouts including playoff bouts.
+**Playoff bouts do not score regular points.** Only the regular 15-day
+schedule contributes 2/win and scalp bonuses. The playoff round only
+contributes via the yusho/playoff-appearance bonuses above. Implementation
+note: the sumo-api flags playoff matches with `day=16` (or sometimes
+`day=15` with a separate marker); we'll need to inspect a recent basho
+with a playoff and filter playoff matches out of the win/scalp counts in
+the scoring engine.
 
 ### Trading
 
@@ -71,14 +75,16 @@ unguessable but the trust model assumes the friend group.
 
 ### Components
 
-- **Frontend** — React 18 + Vite + TypeScript. React Query for server
-  state. Plain CSS or Tailwind (decide in v0). Built static assets are
-  served by FastAPI in prod (or by Supabase/Vercel if we split deploys).
+- **Frontend** — React 18 + Vite + TypeScript with Tailwind CSS. React
+  Query for server state. Built static assets are served by FastAPI in
+  prod (or by Supabase/Vercel if we split deploys).
 - **Backend** — FastAPI, SQLAlchemy 2.x async, Pydantic v2. Single Python
   package `sumo/` (extending the existing one). Migrations via Alembic.
 - **Data sync** — the existing `download_data.py` is refactored to write
-  to Postgres instead of SQLite. A daily cron (APScheduler in-process, or
-  a Supabase scheduled function) calls it during the active tournament.
+  to Postgres instead of SQLite. **Sync is admin-triggered only** — no
+  cron. Admin clicks "Sync now" in the admin console (typically after
+  each day's bouts finish) and the FastAPI process pulls fresh Makuuchi
+  data for the active basho.
 - **Scoring engine** — pure function in Python that takes a tournament
   ID and a `through_day` integer and returns the standings breakdown.
   No caching in v1; recompute on every request.
@@ -89,8 +95,8 @@ unguessable but the trust model assumes the friend group.
   Vite dev server with proxy to backend.
 - **Prod** — Supabase Postgres. FastAPI on Fly.io / Railway / a small VM
   (any container host). Frontend bundle served from the same container at
-  `/`. Daily cron via APScheduler started inside the FastAPI process
-  (fine for one replica; if we ever scale, move to a separate worker).
+  `/`. No background workers — sync runs synchronously inside the request
+  handler when the admin clicks it.
 
 ## 4. Data model
 
@@ -213,9 +219,9 @@ def compute_standings(
 
 Returns per-participant: total points, breakdown by source (wins,
 scalps, awards, adjustments), and a per-day timeline. Filters everything
-by `match.day <= through_day` and `score_adjustment.day <= through_day`
-and ignores awards if `through_day < 15` (or whatever day the playoff
-occurred — typically 15).
+by `match.day <= through_day` and `score_adjustment.day <= through_day`,
+ignores awards if `through_day < 15`, and **excludes playoff matches
+from win/scalp counts entirely** (regardless of `through_day`).
 
 Ownership at a given day is derived from `roster_entry`: the entry is
 owned on day `d` iff `acquired_before_day <= d AND (released_before_day
@@ -287,16 +293,15 @@ data. Two changes:
 
 1. Swap the SQLite connection for SQLAlchemy / asyncpg against the
    shared Postgres DB.
-2. Wrap `main()` in a function callable from FastAPI's lifespan or
-   from APScheduler.
+2. Wrap `main()` in a function callable from a FastAPI handler.
 
-The cron runs once an hour during an active tournament (the basho's
-`start_date <= today <= end_date`) and is a no-op otherwise. It only
-pulls Makuuchi data for the active basho during the tournament; a
-fuller historical pull stays as a one-shot script.
+Sync is **manual, admin-only**: `POST /api/admin/sync` pulls Makuuchi
+data for the active basho on demand. The expected workflow is "admin
+opens the app after the day's bouts and hits Sync". The same routine
+backs a one-shot bootstrap script for historical pulls.
 
-`POST /api/admin/sync` triggers the same routine on demand for the
-active tournament.
+Sync is idempotent (the existing `maybe_insert_*` pattern) so re-running
+mid-day to pick up newly recorded bouts is safe.
 
 ## 9. Open questions / v2
 

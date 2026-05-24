@@ -6,7 +6,7 @@ the next basho with at least Phase 4 shipped.
 ## Phase 0 — Repo scaffolding
 
 - [ ] Add `pyproject.toml` (or keep `requirements.txt`) with FastAPI,
-      SQLAlchemy, asyncpg, Alembic, APScheduler, Pydantic v2.
+      SQLAlchemy, asyncpg, Alembic, Pydantic v2.
 - [ ] Create `backend/` package (move existing `sumo/` underneath as
       `backend/sumo/` or rename). Layout:
       ```
@@ -22,7 +22,8 @@ the next basho with at least Phase 4 shipped.
         alembic/
         tests/
       ```
-- [ ] Create `frontend/` with Vite + React + TS template.
+- [ ] Create `frontend/` with Vite + React + TS template + Tailwind CSS
+      (`tailwindcss`, `postcss`, `autoprefixer`, baseline `tailwind.config.js`).
 - [ ] `docker-compose.yml` for local Postgres + adminer.
 - [ ] `Makefile` (or `justfile`) with `dev`, `lint`, `test`, `migrate`.
 
@@ -35,7 +36,8 @@ the next basho with at least Phase 4 shipped.
 - [ ] Port `download_data.py` to async SQLAlchemy. Keep the
       `maybe_insert_*` idempotent pattern.
 - [ ] One-shot CLI: `python -m app.sync.bootstrap` to populate history.
-- [ ] APScheduler job that runs every hour during an active basho.
+- [ ] `POST /api/admin/sync` endpoint that runs the active-basho pull
+      synchronously (no scheduler).
 - [ ] Test: run the script against a local Postgres, confirm the same
       counts as the existing SQLite DB.
 
@@ -76,14 +78,20 @@ the next basho with at least Phase 4 shipped.
 
 - [ ] Migration for `score_adjustment`, `tournament_award`.
 - [ ] Scoring engine (`app/scoring/engine.py`):
-      - Wins: count `match` rows in Makuuchi where the rikishi is owned.
-      - Scalps: same, but `winner_id` is owned by player A and loser's
+      - Wins: count `match` rows in Makuuchi where the rikishi is owned,
+        **excluding playoff matches**.
+      - Scalps: same exclusion; `winner_id` owned by player A, loser's
         owner ≠ A (NULL is fine; just not self).
       - Awards: yusho=2, playoff=1, sansho kinds=1 each, attributed via
         roster ownership at end of day 15.
       - Adjustments: signed sum.
       - All filtered by `through_day`. Awards only count if
         `through_day >= 15` (configurable, defaults to 15).
+      - First step in this phase: inspect a recent basho with a playoff
+        (e.g. 2023.11 — Atamifuji/Kirishima/Takakeisho) in the existing
+        SQLite DB to confirm how the sumo-api represents playoff bouts
+        (day number, kimarite, or separate field), then encode the
+        filter.
 - [ ] Endpoints:
       - `GET /api/tournaments/{id}/standings?through_day=N`
       - `GET /api/tournaments/{id}/days/{n}`
