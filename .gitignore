@@ -1,2 +1,23 @@
 sumo/sumo.db
 .cache
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
