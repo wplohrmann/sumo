@@ -10,6 +10,7 @@ from app.api import (
     rikishi,
     standings,
     tournaments,
+    trades,
 )
 
 router = APIRouter()
@@ -18,6 +19,7 @@ router.include_router(me.router)
 router.include_router(tournaments.router)
 router.include_router(rikishi.router)
 router.include_router(picks.router)
+router.include_router(trades.router)
 router.include_router(standings.router)
 router.include_router(adjustments.router)
 router.include_router(awards.router)

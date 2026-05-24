@@ -7,6 +7,7 @@ import PricingTable from "../components/PricingTable";
 import PickEntry from "../components/PickEntry";
 import AdjustmentsAdmin from "../components/AdjustmentsAdmin";
 import AwardsAdmin from "../components/AwardsAdmin";
+import TradeAdmin from "../components/TradeAdmin";
 
 export default function Admin() {
   const t = useCurrentTournament();
@@ -213,6 +214,17 @@ export default function Admin() {
                 <PickEntry tid={t.data.id} />
               </section>
             </>
+          )}
+
+          {(t.data.status === "drafting" || t.data.status === "active") && (
+            <section>
+              <h2 className="text-xl font-semibold mb-2">Record a trade</h2>
+              <p className="text-sm text-stone-600 mb-2">
+                Sells one of the participant's rikishi for half its purchase
+                price (rounded down) and buys another at the listed price.
+              </p>
+              <TradeAdmin tid={t.data.id} />
+            </section>
           )}
 
           {t.data.status !== "archived" && (

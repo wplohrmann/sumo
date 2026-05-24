@@ -107,6 +107,21 @@ export interface Award {
   kind: "yusho" | "playoff" | "shukun" | "kanto" | "gino";
 }
 
+export interface Trade {
+  id: string;
+  participant_user_id: string;
+  sold_entry_id: string;
+  bought_entry_id: string;
+  effective_before_day: number;
+  note: string | null;
+  sold_rikishi_id: number;
+  sold_rikishi_name: string | null;
+  sale_price_pence: number;
+  bought_rikishi_id: number;
+  bought_rikishi_name: string | null;
+  purchase_price_pence: number;
+}
+
 const BASE = "/api";
 
 async function request<T>(
@@ -223,6 +238,22 @@ export const api = {
     request<Award[]>(`/tournaments/${tid}/awards`, {
       method: "PUT",
       body: JSON.stringify({ awards }),
+    }),
+
+  listTrades: (tid: string) => request<Trade[]>(`/tournaments/${tid}/trades`),
+  createTrade: (
+    tid: string,
+    body: {
+      participant_user_id: string;
+      sell_entry_id: string;
+      buy_rikishi_id: number;
+      effective_before_day: number;
+      note?: string | null;
+    },
+  ) =>
+    request<Trade>(`/tournaments/${tid}/trades`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 
   sync: (basho_id: string, days = 15) =>

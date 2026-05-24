@@ -89,6 +89,14 @@ export function useAwards(tid: string | undefined) {
   });
 }
 
+export function useTrades(tid: string | undefined) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "trades"],
+    queryFn: () => api.listTrades(tid!),
+    enabled: !!tid,
+  });
+}
+
 export function useSetSpoilerDay() {
   const qc = useQueryClient();
   return useMutation({

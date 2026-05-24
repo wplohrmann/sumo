@@ -77,15 +77,13 @@ async def list_picks(
         )
     ).all()
 
-    # All active roster entries for the tournament in one query.
+    # Pull every entry (active and released) so we can compute the sunk
+    # cost from past trades (half-loss).
     entries = (
         await session.execute(
             select(RosterEntry, Rikishi.name)
             .join(Rikishi, Rikishi.id == RosterEntry.rikishi_id)
-            .where(
-                RosterEntry.tournament_id == tournament_id,
-                RosterEntry.released_before_day.is_(None),
-            )
+            .where(RosterEntry.tournament_id == tournament_id)
             .order_by(RosterEntry.created_at)
         )
     ).all()
@@ -96,8 +94,14 @@ async def list_picks(
 
     rosters = []
     for user, _seed in participants:
-        active = by_user.get(user.id, [])
-        spent = sum(e.purchase_price_pence for e, _ in active)
+        all_entries = by_user.get(user.id, [])
+        active = [(e, name) for e, name in all_entries if e.released_before_day is None]
+        spent = 0
+        for e, _ in all_entries:
+            if e.released_before_day is None:
+                spent += e.purchase_price_pence
+            else:
+                spent += e.purchase_price_pence - (e.sale_price_pence or 0)
         rosters.append(
             ParticipantRoster(
                 user_id=str(user.id),
@@ -161,16 +165,17 @@ async def create_pick(
             detail="rikishi has no price set for this tournament",
         )
 
-    # Active picks for this participant.
-    active = (
+    # All entries (active + released) for budget math; active subset for
+    # roster limits.
+    all_entries = (
         await session.execute(
             select(RosterEntry).where(
                 RosterEntry.tournament_id == tournament_id,
                 RosterEntry.participant_user_id == body.participant_user_id,
-                RosterEntry.released_before_day.is_(None),
             )
         )
     ).scalars().all()
+    active = [e for e in all_entries if e.released_before_day is None]
 
     if len(active) >= t.roster_size:
         raise HTTPException(
@@ -196,7 +201,12 @@ async def create_pick(
             detail="another participant already owns this rikishi",
         )
 
-    spent = sum(e.purchase_price_pence for e in active)
+    spent = 0
+    for e in all_entries:
+        if e.released_before_day is None:
+            spent += e.purchase_price_pence
+        else:
+            spent += e.purchase_price_pence - (e.sale_price_pence or 0)
     if spent + price_row.price_pence > t.budget_pence:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
