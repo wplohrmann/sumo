@@ -5,6 +5,8 @@ import { api } from "../api/client";
 import { useCurrentTournament, useParticipants } from "../api/hooks";
 import PricingTable from "../components/PricingTable";
 import PickEntry from "../components/PickEntry";
+import AdjustmentsAdmin from "../components/AdjustmentsAdmin";
+import AwardsAdmin from "../components/AwardsAdmin";
 
 export default function Admin() {
   const t = useCurrentTournament();
@@ -209,6 +211,29 @@ export default function Admin() {
               <section>
                 <h2 className="text-xl font-semibold mb-2">Record a draft pick</h2>
                 <PickEntry tid={t.data.id} />
+              </section>
+            </>
+          )}
+
+          {t.data.status !== "archived" && (
+            <>
+              <section>
+                <h2 className="text-xl font-semibold mb-2">Score adjustments</h2>
+                <p className="text-sm text-stone-600 mb-2">
+                  Manual bonuses/deductions. Leave day blank for a whole-tournament
+                  adjustment (only visible at day 15).
+                </p>
+                <AdjustmentsAdmin tid={t.data.id} />
+              </section>
+
+              <section>
+                <h2 className="text-xl font-semibold mb-2">Yusho / playoff / sansho</h2>
+                <p className="text-sm text-stone-600 mb-2">
+                  Enter once day 15 is in the books. Yusho is worth 2 pts; each
+                  other award is 1 pt and attributed to whoever owns the rikishi
+                  at end of day 15.
+                </p>
+                <AwardsAdmin tid={t.data.id} />
               </section>
             </>
           )}

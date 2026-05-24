@@ -56,3 +56,46 @@ export function usePicks(tid: string | undefined) {
     enabled: !!tid,
   });
 }
+
+export function useStandings(tid: string | undefined, throughDay?: number) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "standings", throughDay],
+    queryFn: () => api.standings(tid!, throughDay),
+    enabled: !!tid,
+  });
+}
+
+export function useDay(tid: string | undefined, day: number) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "day", day],
+    queryFn: () => api.day(tid!, day),
+    enabled: !!tid && day >= 1 && day <= 15,
+  });
+}
+
+export function useAdjustments(tid: string | undefined) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "adjustments"],
+    queryFn: () => api.listAdjustments(tid!),
+    enabled: !!tid,
+  });
+}
+
+export function useAwards(tid: string | undefined) {
+  return useQuery({
+    queryKey: ["tournaments", tid, "awards"],
+    queryFn: () => api.listAwards(tid!),
+    enabled: !!tid,
+  });
+}
+
+export function useSetSpoilerDay() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (day: number | null) => api.setSpoilerDay(day),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me"] });
+      qc.invalidateQueries({ queryKey: ["tournaments"] });
+    },
+  });
+}

@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { useLogout, useMe } from "../api/hooks";
+import SpoilerToggle from "./SpoilerToggle";
 
 function navLinkCls({ isActive }: { isActive: boolean }) {
   return [
@@ -40,7 +41,8 @@ export default function Shell() {
               </NavLink>
             )}
           </nav>
-          <div className="flex items-center gap-2 text-sm text-stone-600">
+          <div className="flex items-center gap-3 text-sm text-stone-600">
+            <SpoilerToggle />
             {me.data && <span>{me.data.display_name}</span>}
             <button
               className="px-2 py-1 rounded border border-stone-300 hover:bg-stone-50"

@@ -7,6 +7,7 @@ import Home from "./routes/Home";
 import Admin from "./routes/Admin";
 import Draft from "./routes/Draft";
 import Standings from "./routes/Standings";
+import Day from "./routes/Day";
 import Trades from "./routes/Trades";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="admin" element={<Admin />} />
         <Route path="draft" element={<Draft />} />
         <Route path="standings" element={<Standings />} />
+        <Route path="days/:day" element={<Day />} />
         <Route path="trades" element={<Trades />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -56,6 +56,57 @@ export interface RosterBoard {
   rosters: ParticipantRoster[];
 }
 
+export interface DayBreakdown {
+  day: number;
+  wins: number;
+  scalps: number;
+  wins_points: number;
+  scalp_points: number;
+  adjustment_points: number;
+}
+
+export interface Standing {
+  user_id: string;
+  display_name: string;
+  total_points: number;
+  wins_points: number;
+  scalp_points: number;
+  award_points: number;
+  adjustment_points: number;
+  by_day: DayBreakdown[];
+}
+
+export interface Owner {
+  user_id: string;
+  display_name: string;
+}
+
+export interface DayMatch {
+  match_id: string;
+  rikishi1_id: number;
+  rikishi1_name: string | null;
+  rikishi1_owner: Owner | null;
+  rikishi2_id: number;
+  rikishi2_name: string | null;
+  rikishi2_owner: Owner | null;
+  winner_id: number | null;
+  kimarite: string | null;
+}
+
+export interface Adjustment {
+  id: string;
+  participant_user_id: string;
+  points: number;
+  reason: string;
+  day: number | null;
+}
+
+export interface Award {
+  rikishi_id: number;
+  rikishi_name: string | null;
+  kind: "yusho" | "playoff" | "shukun" | "kanto" | "gino";
+}
+
 const BASE = "/api";
 
 async function request<T>(
@@ -138,6 +189,40 @@ export const api = {
   deletePick: (tid: string, entry_id: string) =>
     request<void>(`/tournaments/${tid}/picks/${entry_id}`, {
       method: "DELETE",
+    }),
+
+  standings: (tid: string, throughDay?: number) =>
+    request<Standing[]>(
+      throughDay != null
+        ? `/tournaments/${tid}/standings?through_day=${throughDay}`
+        : `/tournaments/${tid}/standings`,
+    ),
+  day: (tid: string, day: number) =>
+    request<DayMatch[]>(`/tournaments/${tid}/days/${day}`),
+
+  listAdjustments: (tid: string) =>
+    request<Adjustment[]>(`/tournaments/${tid}/adjustments`),
+  addAdjustment: (
+    tid: string,
+    body: {
+      participant_user_id: string;
+      points: number;
+      reason: string;
+      day: number | null;
+    },
+  ) =>
+    request<Adjustment>(`/tournaments/${tid}/adjustments`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteAdjustment: (tid: string, id: string) =>
+    request<void>(`/tournaments/${tid}/adjustments/${id}`, { method: "DELETE" }),
+
+  listAwards: (tid: string) => request<Award[]>(`/tournaments/${tid}/awards`),
+  replaceAwards: (tid: string, awards: { rikishi_id: number; kind: Award["kind"] }[]) =>
+    request<Award[]>(`/tournaments/${tid}/awards`, {
+      method: "PUT",
+      body: JSON.stringify({ awards }),
     }),
 
   sync: (basho_id: string, days = 15) =>
