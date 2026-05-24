@@ -19,7 +19,6 @@ class Settings(BaseSettings):
         default="dev-secret-change-me",
         description="HMAC secret for signing the session cookie.",
     )
-    cookie_name: str = Field(default="sumo_session")
     cookie_secure: bool = Field(default=False)
     sumo_api_base_url: str = Field(default="https://www.sumo-api.com/api")
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
