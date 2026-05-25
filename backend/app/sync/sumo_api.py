@@ -137,6 +137,35 @@ async def sync_banzuke(
     await session.commit()
 
 
+async def _ensure_rikishi(
+    session: AsyncSession, api: SumoApiClient, rikishi_id: int | None
+) -> None:
+    """Ensure `rikishi_id` exists in the rikishi table, lazily fetching from
+    the API if needed. Used when a torikumi references a rikishi outside the
+    division we loaded (e.g. juryo-up bouts in a Makuuchi torikumi)."""
+    if rikishi_id is None:
+        return
+    if await session.scalar(select(Rikishi.id).where(Rikishi.id == rikishi_id)):
+        return
+    try:
+        data = await api.fetch(f"/rikishi/{rikishi_id}")
+    except httpx.HTTPStatusError as e:
+        logger.warning("rikishi %s lookup failed: %s", rikishi_id, e)
+        data = {"id": rikishi_id, "shikonaEn": f"#{rikishi_id}"}
+    await session.execute(
+        _on_conflict_do_nothing(
+            session,
+            Rikishi.__table__,
+            {
+                "id": data.get("id") or rikishi_id,
+                "name": data.get("shikonaEn") or f"#{rikishi_id}",
+                "debut_date": _parse_basho_month(data.get("debut")),
+                "birth_date": _parse_date(data.get("birthDate")),
+            },
+        )
+    )
+
+
 async def sync_rikishi_details(
     session: AsyncSession, api: SumoApiClient, basho_id: str
 ) -> None:
@@ -177,16 +206,25 @@ async def sync_measurements(
     )
     if existing:
         return
+    # The /measurements endpoint returns rows for every division; we only keep
+    # measurements for rikishi we've already loaded, to avoid FK violations
+    # when an active-tournament sync only pulled the Makuuchi banzuke.
+    known_ids = set(
+        (await session.execute(select(Rikishi.id))).scalars().all()
+    )
     measurements = await api.fetch(f"/measurements?bashoId={basho_id}")
     for m in measurements:
         if m.get("bashoId") != basho_id:
+            continue
+        rikishi_id = m.get("rikishiId")
+        if rikishi_id not in known_ids:
             continue
         await session.execute(
             _on_conflict_do_nothing(
                 session,
                 Measurement.__table__,
                 {
-                    "rikishi_id": m.get("rikishiId"),
+                    "rikishi_id": rikishi_id,
                     "basho_id": basho_id,
                     "height_cm": m.get("height"),
                     "weight_kg": m.get("weight"),
@@ -220,6 +258,10 @@ async def sync_matches_for_day(
         existing = await session.scalar(select(Match).where(Match.id == match_id))
         if existing:
             continue
+        east_id = m.get("eastId")
+        west_id = m.get("westId")
+        await _ensure_rikishi(session, api, east_id)
+        await _ensure_rikishi(session, api, west_id)
         await session.execute(
             _on_conflict_do_nothing(
                 session,
@@ -227,8 +269,8 @@ async def sync_matches_for_day(
                 {
                     "id": match_id,
                     "basho_id": basho_id,
-                    "rikishi1_id": m.get("eastId"),
-                    "rikishi2_id": m.get("westId"),
+                    "rikishi1_id": east_id,
+                    "rikishi2_id": west_id,
                     "winner_id": m.get("winnerId"),
                     "kimarite": m.get("kimarite"),
                     "day": day,
