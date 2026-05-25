@@ -40,8 +40,6 @@ export default function Admin() {
 
   const [syncBasho, setSyncBasho] = useState("");
   const [tournamentBasho, setTournamentBasho] = useState("");
-  const [tournamentName, setTournamentName] = useState("");
-  const [budget, setBudget] = useState(55);
   const [participantName, setParticipantName] = useState("");
   const [lastToken, setLastToken] = useState<string | null>(null);
 
@@ -63,8 +61,7 @@ export default function Admin() {
   });
 
   const createT = useMutation({
-    mutationFn: (b: { basho_id: string; name: string; budget_pence: number }) =>
-      api.createTournament(b),
+    mutationFn: (b: { basho_id: string }) => api.createTournament(b),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tournaments", "current"] }),
   });
 
@@ -76,6 +73,19 @@ export default function Admin() {
       setParticipantName("");
       qc.invalidateQueries({
         queryKey: ["tournaments", data ? t.data?.id : undefined, "participants"],
+      });
+    },
+  });
+
+  const removeP = useMutation({
+    mutationFn: ({ tid, userId }: { tid: string; userId: string }) =>
+      api.removeParticipant(tid, userId),
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["tournaments", t.data?.id, "participants"],
+      });
+      qc.invalidateQueries({
+        queryKey: ["tournaments", t.data?.id, "picks"],
       });
     },
   });
@@ -135,15 +145,15 @@ export default function Admin() {
       {!t.data && (
         <section>
           <h2 className="text-xl font-semibold mb-2">Create tournament</h2>
+          <p className="text-sm text-stone-600 mb-2">
+            Budget is fixed at £55 per the league rules. The tournament name
+            is taken from the basho.
+          </p>
           <form
             className="space-y-2"
             onSubmit={(e) => {
               e.preventDefault();
-              createT.mutate({
-                basho_id: tournamentBasho,
-                name: tournamentName,
-                budget_pence: Math.round(budget * 100),
-              });
+              createT.mutate({ basho_id: tournamentBasho });
             }}
           >
             <select
@@ -162,22 +172,9 @@ export default function Admin() {
                 </option>
               ))}
             </select>
-            <input
-              className="block w-full rounded border border-stone-300 px-3 py-2"
-              placeholder="league name"
-              value={tournamentName}
-              onChange={(e) => setTournamentName(e.target.value)}
-            />
-            <input
-              className="block w-full rounded border border-stone-300 px-3 py-2"
-              type="number"
-              step="0.5"
-              value={budget}
-              onChange={(e) => setBudget(Number(e.target.value))}
-            />
             <button
               type="submit"
-              disabled={createT.isPending}
+              disabled={createT.isPending || !tournamentBasho}
               className="px-4 py-2 bg-stone-800 text-white rounded disabled:opacity-50"
             >
               Create
@@ -243,11 +240,41 @@ export default function Admin() {
             )}
             <ul className="mt-3 divide-y rounded border bg-white">
               {participants.data?.map((p) => (
-                <li key={p.user_id} className="px-3 py-2 text-sm">
-                  {p.display_name}
+                <li
+                  key={p.user_id}
+                  className="px-3 py-2 text-sm flex items-center justify-between"
+                >
+                  <span>{p.display_name}</span>
+                  {(t.data!.status === "setup" ||
+                    t.data!.status === "drafting") && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Remove ${p.display_name}? This deletes their picks and invalidates their token.`,
+                          )
+                        ) {
+                          removeP.mutate({
+                            tid: t.data!.id,
+                            userId: p.user_id,
+                          });
+                        }
+                      }}
+                      disabled={removeP.isPending}
+                      className="text-xs text-red-700 hover:underline disabled:opacity-50"
+                    >
+                      remove
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
+            {removeP.isError && (
+              <p className="mt-2 text-sm text-red-600">
+                {(removeP.error as Error).message}
+              </p>
+            )}
           </section>
 
           {(t.data.status === "setup" || t.data.status === "drafting") && (

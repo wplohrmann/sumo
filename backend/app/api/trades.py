@@ -26,6 +26,12 @@ from app.db.models import (
     TournamentParticipant,
 )
 from app.db.session import get_session
+from app.sharing import (
+    detail_for_warnings,
+    load_rikishi_names,
+    load_user_index,
+    warnings_from_added,
+)
 
 router = APIRouter(prefix="/tournaments", tags=["trades"])
 
@@ -36,6 +42,7 @@ class TradeIn(BaseModel):
     buy_rikishi_id: int
     effective_before_day: int = Field(ge=1, le=15)
     note: str | None = None
+    force: bool = False
 
 
 class TradeOut(BaseModel):
@@ -168,19 +175,16 @@ async def create_trade(
             status_code=400, detail="rikishi has no price for this tournament"
         )
 
-    # No double-ownership across participants at the effective day.
-    other_owner = await session.scalar(
+    # The participant can't already hold this rikishi themselves.
+    self_owner = await session.scalar(
         select(RosterEntry).where(
             RosterEntry.tournament_id == tournament_id,
             RosterEntry.rikishi_id == body.buy_rikishi_id,
             RosterEntry.released_before_day.is_(None),
+            RosterEntry.participant_user_id == body.participant_user_id,
         )
     )
-    if other_owner is not None and other_owner.participant_user_id != body.participant_user_id:
-        raise HTTPException(
-            status_code=409, detail="another participant already owns this rikishi"
-        )
-    if other_owner is not None and other_owner.participant_user_id == body.participant_user_id:
+    if self_owner is not None:
         raise HTTPException(
             status_code=409, detail="participant already owns this rikishi"
         )
@@ -200,6 +204,37 @@ async def create_trade(
                 f"£{tournament.budget_pence / 100:.2f}"
             ),
         )
+
+    if not body.force:
+        # Compute warnings as if the trade had already been applied:
+        # release the sold entry, then check the resulting set.
+        all_active = (
+            await session.scalars(
+                select(RosterEntry).where(
+                    RosterEntry.tournament_id == tournament_id,
+                    RosterEntry.released_before_day.is_(None),
+                )
+            )
+        ).all()
+        after_release = [e for e in all_active if e.id != sold.id]
+        user_index = await load_user_index(session, tournament_id)
+        rikishi_ids = sorted(
+            {e.rikishi_id for e in after_release} | {body.buy_rikishi_id}
+        )
+        rikishi_names = await load_rikishi_names(session, rikishi_ids)
+        new_warnings = warnings_from_added(
+            after_release,
+            tournament,
+            user_index,
+            rikishi_names,
+            body.participant_user_id,
+            body.buy_rikishi_id,
+        )
+        if new_warnings:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=detail_for_warnings(new_warnings),
+            )
 
     # Apply.
     sold.sale_price_pence = sale_price

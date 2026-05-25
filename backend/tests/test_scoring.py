@@ -340,6 +340,32 @@ async def test_score_adjustments(db):
 
 
 @pytest.mark.asyncio
+async def test_shared_picks_split_wins_and_scalps(db):
+    """When two players share a rikishi, both get the win + scalp credit."""
+    w = await _make_world(db)
+    # Alice and Bob both own rikishi 1 (the winner).
+    _draft(db, w["tournament_id"], w["alice_id"], 1)
+    _draft(db, w["tournament_id"], w["bob_id"], 1)
+    # Bob also owns rikishi 3 (the loser).
+    _draft(db, w["tournament_id"], w["bob_id"], 3)
+
+    _match(db, w["basho_id"], 1, 1, 3, 1)  # rikishi 1 beats rikishi 3
+    await db.commit()
+
+    standings = {
+        s.display_name: s
+        for s in await compute_standings(db, w["tournament_id"], 1)
+    }
+    # Alice owns the winner only → +2 win, +1 scalp (Bob owns the loser).
+    assert standings["Alice"].wins_points == 2
+    assert standings["Alice"].scalp_points == 1
+    # Bob owns winner AND loser → +2 win for the winner ownership, but the
+    # only loser-owner (himself) is filtered as a self-scalp → 0 scalps.
+    assert standings["Bob"].wins_points == 2
+    assert standings["Bob"].scalp_points == 0
+
+
+@pytest.mark.asyncio
 async def test_sort_order(db):
     """Standings sorted by total desc, then wins, scalps, name."""
     w = await _make_world(db)

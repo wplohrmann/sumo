@@ -51,23 +51,24 @@ async def _seed_basho(rikishi: list[tuple[int, str, int]]) -> None:
     await test_engine.dispose()
 
 
-async def _bootstrap(client: httpx.AsyncClient) -> tuple[str, list[str]]:
-    """Log in admin, create tournament, add 2 participants. Return (tid, user_ids)."""
+async def _bootstrap(
+    client: httpx.AsyncClient, participants: list[str] | None = None
+) -> tuple[str, list[str]]:
+    """Log in admin, create tournament, add N participants (default 2)."""
     await client.post("/api/auth/login", json={"token": "change-me"})
-    r = await client.post(
-        "/api/tournaments",
-        json={"basho_id": "202405", "name": "May 2024", "budget_pence": 5500},
-    )
+    r = await client.post("/api/tournaments", json={"basho_id": "202405"})
     assert r.status_code == 201
     tid = r.json()["id"]
 
-    p1 = await client.post(
-        f"/api/tournaments/{tid}/participants", json={"display_name": "Alice"}
-    )
-    p2 = await client.post(
-        f"/api/tournaments/{tid}/participants", json={"display_name": "Bob"}
-    )
-    return tid, [p1.json()["user_id"], p2.json()["user_id"]]
+    names = participants or ["Alice", "Bob"]
+    user_ids: list[str] = []
+    for name in names:
+        p = await client.post(
+            f"/api/tournaments/{tid}/participants",
+            json={"display_name": name},
+        )
+        user_ids.append(p.json()["user_id"])
+    return tid, user_ids
 
 
 @pytest.mark.asyncio
@@ -75,14 +76,14 @@ async def test_list_rikishi_and_pricing(client):
     await _seed_basho([(1, "Terunofuji", 1), (2, "Hoshoryu", 2)])
     tid, _ = await _bootstrap(client)
 
+    # Default prices come from rank: "Maegashira 1" → £17, "Maegashira 2" → £16.
     r = await client.get(f"/api/tournaments/{tid}/rikishi")
     assert r.status_code == 200
-    rows = r.json()
-    assert len(rows) == 2
-    assert {row["rikishi_id"] for row in rows} == {1, 2}
-    assert all(row["price_pence"] is None for row in rows)
+    by_id = {row["rikishi_id"]: row for row in r.json()}
+    assert by_id[1]["price_pence"] == 1700
+    assert by_id[2]["price_pence"] == 1600
 
-    # Set prices.
+    # Admin override still wins.
     await client.put(
         f"/api/tournaments/{tid}/rikishi/1/price", json={"price_pence": 2500}
     )
@@ -140,15 +141,15 @@ async def test_pick_creation_and_constraints(client):
     )
     assert r.status_code == 409
 
-    # Bob can't pick a rikishi Alice owns.
+    # Bob CAN share a rikishi with Alice — sharing rules allow up to 2 owners
+    # before trading opens, so picking rikishi 1 lands without a warning.
     r = await client.post(
         f"/api/tournaments/{tid}/picks",
         json={"participant_user_id": bob, "rikishi_id": 1},
     )
-    assert r.status_code == 409
-    assert "another participant" in r.json()["detail"]
+    assert r.status_code == 201, r.text
 
-    # Bob picks his own 4.
+    # Bob picks his other 4.
     for rid in (3, 5):
         r = await client.post(
             f"/api/tournaments/{tid}/picks",
@@ -163,7 +164,86 @@ async def test_pick_creation_and_constraints(client):
     assert by_name["Alice"]["spent_pence"] == 2000 + 1500 + 1000
     assert by_name["Alice"]["remaining_pence"] == 5500 - (2000 + 1500 + 1000)
     assert len(by_name["Alice"]["entries"]) == 3
-    assert by_name["Bob"]["spent_pence"] == 1500 + 1200
+    # Bob shares rikishi 1 with Alice, plus owns 3 and 5.
+    assert by_name["Bob"]["spent_pence"] == 2000 + 1500 + 1200
+    # Sharing 1 rikishi between Alice/Bob with cap 2 → no warnings.
+    assert board["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_sharing_rules_warn_and_can_be_forced(client):
+    await _seed_basho(
+        [
+            (1, "R1", 10),
+            (2, "R2", 11),
+            (3, "R3", 12),
+            (4, "R4", 13),
+        ]
+    )
+    tid, [alice, bob, carol] = await _bootstrap(client, ["Alice", "Bob", "Carol"])
+    # Cap everyone's prices low so the cheap budget covers shared picks.
+    for rid in (1, 2, 3, 4):
+        await client.put(
+            f"/api/tournaments/{tid}/rikishi/{rid}/price",
+            json={"price_pence": 500},
+        )
+
+    # Alice and Bob both pick rikishi 1 — fine (2 owners ≤ cap of 2).
+    for who in (alice, bob):
+        r = await client.post(
+            f"/api/tournaments/{tid}/picks",
+            json={"participant_user_id": who, "rikishi_id": 1},
+        )
+        assert r.status_code == 201, r.text
+
+    # Carol tries to pick rikishi 1 — 3rd owner during drafting → warning.
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={"participant_user_id": carol, "rikishi_id": 1},
+    )
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "sharing_warning"
+    assert any(w["code"] == "rikishi_over_capped" for w in detail["warnings"])
+
+    # Forcing it succeeds, and the warning surfaces on the roster board.
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={
+            "participant_user_id": carol,
+            "rikishi_id": 1,
+            "force": True,
+        },
+    )
+    assert r.status_code == 201, r.text
+    board = (await client.get(f"/api/tournaments/{tid}/picks")).json()
+    assert any(w["code"] == "rikishi_over_capped" for w in board["warnings"])
+
+    # Pair-overlap rule: Alice and Bob already share R1. Pushing the pair
+    # overlap above 2 requires sharing 3 rikishi between them.
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={"participant_user_id": alice, "rikishi_id": 2},
+    )
+    assert r.status_code == 201
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={"participant_user_id": bob, "rikishi_id": 2},
+    )
+    assert r.status_code == 201  # pair overlap goes to 2 = cap, no warning yet
+
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={"participant_user_id": alice, "rikishi_id": 3},
+    )
+    assert r.status_code == 201
+    r = await client.post(
+        f"/api/tournaments/{tid}/picks",
+        json={"participant_user_id": bob, "rikishi_id": 3},
+    )
+    assert r.status_code == 409
+    codes = {w["code"] for w in r.json()["detail"]["warnings"]}
+    assert "pair_overlap_over_capped" in codes
 
 
 @pytest.mark.asyncio

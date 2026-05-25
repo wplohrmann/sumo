@@ -19,8 +19,6 @@ ALLOWED_STATUSES = {"setup", "drafting", "active", "archived"}
 
 class TournamentCreate(BaseModel):
     basho_id: str
-    name: str
-    budget_pence: int = 5500
     roster_size: int = 4
 
 
@@ -72,13 +70,27 @@ async def list_tournaments(
     return [_serialize(t) for t in rows]
 
 
+FIXED_BUDGET_PENCE = 5500
+
+
+def _derive_name(basho: Basho) -> str:
+    """The tournament name is just the basho label; we don't carry a
+    separate league name."""
+    base = basho.name or basho.id
+    year = basho.id[:4] if len(basho.id) >= 4 else ""
+    if year and year not in base:
+        return f"{base} {year}"
+    return base
+
+
 @router.post("", response_model=TournamentOut, status_code=status.HTTP_201_CREATED)
 async def create_tournament(
     body: TournamentCreate,
     session: AsyncSession = Depends(get_session),
     _admin: AppUser = Depends(current_admin),
 ) -> TournamentOut:
-    if not await session.get(Basho, body.basho_id):
+    basho = await session.get(Basho, body.basho_id)
+    if basho is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="unknown basho_id — run a sync first",
@@ -93,9 +105,9 @@ async def create_tournament(
         )
     t = Tournament(
         basho_id=body.basho_id,
-        name=body.name,
+        name=_derive_name(basho),
         status="setup",
-        budget_pence=body.budget_pence,
+        budget_pence=FIXED_BUDGET_PENCE,
         roster_size=body.roster_size,
     )
     session.add(t)
@@ -222,3 +234,79 @@ async def add_participant(
         display_name=user.display_name,
         token=token,
     )
+
+
+@router.delete(
+    "/{tournament_id}/participants/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_participant(
+    tournament_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    _admin: AppUser = Depends(current_admin),
+) -> None:
+    """Remove a participant from a tournament while it's still being set up.
+
+    Cascades to roster entries / adjustments / trades for that user via the
+    ON DELETE CASCADE foreign keys, and deletes the underlying viewer user
+    so their token stops working.
+    """
+    from app.db.models import RosterEntry, ScoreAdjustment, Trade
+
+    t = await session.get(Tournament, tournament_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="tournament not found")
+    if t.status not in ("setup", "drafting"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="participants can only be removed during setup/drafting",
+        )
+
+    participant = await session.get(TournamentParticipant, (tournament_id, user_id))
+    if participant is None:
+        raise HTTPException(status_code=404, detail="participant not found")
+
+    user = await session.get(AppUser, user_id)
+    if user is not None and user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cannot remove the admin user",
+        )
+
+    # Trades reference roster_entry rows via plain FKs (no cascade), so wipe
+    # them in dependency order before removing the participant.
+    await session.execute(
+        Trade.__table__.delete().where(
+            Trade.tournament_id == tournament_id,
+            Trade.participant_user_id == user_id,
+        )
+    )
+    await session.execute(
+        RosterEntry.__table__.delete().where(
+            RosterEntry.tournament_id == tournament_id,
+            RosterEntry.participant_user_id == user_id,
+        )
+    )
+    await session.execute(
+        ScoreAdjustment.__table__.delete().where(
+            ScoreAdjustment.tournament_id == tournament_id,
+            ScoreAdjustment.participant_user_id == user_id,
+        )
+    )
+    await session.delete(participant)
+    await session.flush()
+
+    # Only delete the viewer account if they aren't participating in any
+    # other (e.g. archived) tournaments — otherwise the cascade would wipe
+    # those archived records too.
+    if user is not None:
+        still_used = await session.scalar(
+            select(TournamentParticipant).where(
+                TournamentParticipant.user_id == user_id
+            )
+        )
+        if still_used is None:
+            await session.delete(user)
+
+    await session.commit()

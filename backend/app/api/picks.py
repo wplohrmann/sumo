@@ -23,6 +23,13 @@ from app.db.models import (
     TournamentParticipant,
 )
 from app.db.session import get_session
+from app.sharing import (
+    compute_warnings,
+    detail_for_warnings,
+    load_rikishi_names,
+    load_user_index,
+    warnings_from_added,
+)
 
 router = APIRouter(prefix="/tournaments", tags=["picks"])
 
@@ -30,6 +37,14 @@ router = APIRouter(prefix="/tournaments", tags=["picks"])
 class PickIn(BaseModel):
     participant_user_id: uuid.UUID
     rikishi_id: int
+    force: bool = False
+
+
+class SharingWarningOut(BaseModel):
+    code: str
+    message: str
+    rikishi_id: int | None = None
+    user_ids: list[str] | None = None
 
 
 class RosterEntryOut(BaseModel):
@@ -53,6 +68,7 @@ class RosterBoard(BaseModel):
     budget_pence: int
     roster_size: int
     rosters: list[ParticipantRoster]
+    warnings: list[SharingWarningOut] = []
 
 
 @router.get("/{tournament_id}/picks", response_model=RosterBoard)
@@ -122,10 +138,24 @@ async def list_picks(
             )
         )
 
+    all_entries_only = [e for (e, _) in entries]
+    user_index = await load_user_index(session, tournament_id)
+    rikishi_names = {e.rikishi_id: name for e, name in entries}
+    warnings = compute_warnings(all_entries_only, t, user_index, rikishi_names)
+
     return RosterBoard(
         budget_pence=t.budget_pence,
         roster_size=t.roster_size,
         rosters=rosters,
+        warnings=[
+            SharingWarningOut(
+                code=w.code,
+                message=w.message,
+                rikishi_id=w.rikishi_id,
+                user_ids=w.user_ids,
+            )
+            for w in warnings
+        ],
     )
 
 
@@ -187,19 +217,6 @@ async def create_pick(
             status_code=status.HTTP_409_CONFLICT,
             detail="participant already owns this rikishi",
         )
-    # No two participants can hold the same rikishi at once.
-    other_owner = await session.scalar(
-        select(RosterEntry).where(
-            RosterEntry.tournament_id == tournament_id,
-            RosterEntry.rikishi_id == body.rikishi_id,
-            RosterEntry.released_before_day.is_(None),
-        )
-    )
-    if other_owner is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="another participant already owns this rikishi",
-        )
 
     spent = 0
     for e in all_entries:
@@ -216,6 +233,34 @@ async def create_pick(
                 f"£{t.budget_pence / 100:.2f}"
             ),
         )
+
+    if not body.force:
+        all_active = (
+            await session.scalars(
+                select(RosterEntry).where(
+                    RosterEntry.tournament_id == tournament_id,
+                    RosterEntry.released_before_day.is_(None),
+                )
+            )
+        ).all()
+        user_index = await load_user_index(session, tournament_id)
+        rikishi_ids = sorted(
+            {e.rikishi_id for e in all_active} | {body.rikishi_id}
+        )
+        rikishi_names = await load_rikishi_names(session, rikishi_ids)
+        new_warnings = warnings_from_added(
+            all_active,
+            t,
+            user_index,
+            rikishi_names,
+            body.participant_user_id,
+            body.rikishi_id,
+        )
+        if new_warnings:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=detail_for_warnings(new_warnings),
+            )
 
     entry = RosterEntry(
         tournament_id=tournament_id,

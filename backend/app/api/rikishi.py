@@ -17,6 +17,7 @@ from app.db.models import (
     Tournament,
 )
 from app.db.session import get_session
+from app.pricing import default_price_pence
 
 router = APIRouter(prefix="/tournaments", tags=["rikishi"])
 
@@ -65,13 +66,40 @@ async def list_rikishi(
             .order_by(BashoRikishi.rank_value)
         )
     ).all()
+
+    # Seed default prices for rows that don't have one yet. We only do this
+    # while the draft is still mutable so we don't accidentally re-introduce
+    # prices for an archived tournament.
+    seeded = False
+    if t.status in ("setup", "drafting"):
+        for r in rows:
+            if r.price_pence is not None:
+                continue
+            default = default_price_pence(r.rank)
+            if default is None:
+                continue
+            session.add(
+                RikishiPrice(
+                    tournament_id=tournament_id,
+                    rikishi_id=r.id,
+                    price_pence=default,
+                )
+            )
+            seeded = True
+        if seeded:
+            await session.commit()
+
     return [
         RikishiOut(
             rikishi_id=r.id,
             name=r.name,
             rank=r.rank,
             rank_value=r.rank_value,
-            price_pence=r.price_pence,
+            price_pence=(
+                r.price_pence
+                if r.price_pence is not None
+                else default_price_pence(r.rank)
+            ),
         )
         for r in rows
     ]

@@ -54,9 +54,9 @@ export default function Day() {
                   className={`px-3 py-2 ${eastWon ? "font-semibold" : "text-stone-500"}`}
                 >
                   {m.rikishi1_name}
-                  {m.rikishi1_owner && (
+                  {m.rikishi1_owners.length > 0 && (
                     <span className="ml-2 text-xs text-blue-700">
-                      ({m.rikishi1_owner.display_name})
+                      ({m.rikishi1_owners.map((o) => o.display_name).join(", ")})
                     </span>
                   )}
                 </td>
@@ -64,9 +64,9 @@ export default function Day() {
                 <td
                   className={`px-3 py-2 text-right ${westWon ? "font-semibold" : "text-stone-500"}`}
                 >
-                  {m.rikishi2_owner && (
+                  {m.rikishi2_owners.length > 0 && (
                     <span className="mr-2 text-xs text-blue-700">
-                      ({m.rikishi2_owner.display_name})
+                      ({m.rikishi2_owners.map((o) => o.display_name).join(", ")})
                     </span>
                   )}
                   {m.rikishi2_name}

@@ -61,10 +61,7 @@ async def _seed() -> None:
 async def _setup(client: httpx.AsyncClient):
     await _seed()
     await client.post("/api/auth/login", json={"token": "change-me"})
-    r = await client.post(
-        "/api/tournaments",
-        json={"basho_id": "202405", "name": "May", "budget_pence": 5500},
-    )
+    r = await client.post("/api/tournaments", json={"basho_id": "202405"})
     tid = r.json()["id"]
     a = (
         await client.post(

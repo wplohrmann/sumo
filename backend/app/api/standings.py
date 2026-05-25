@@ -100,10 +100,10 @@ class DayMatchOut(BaseModel):
     match_id: str
     rikishi1_id: int
     rikishi1_name: str | None
-    rikishi1_owner: OwnerOut | None
+    rikishi1_owners: list[OwnerOut]
     rikishi2_id: int
     rikishi2_name: str | None
-    rikishi2_owner: OwnerOut | None
+    rikishi2_owners: list[OwnerOut]
     winner_id: int | None
     kimarite: str | None
 
@@ -145,7 +145,9 @@ async def get_day(
         ).scalars().all()
     }
 
-    def owner_for(rikishi_id: int) -> OwnerOut | None:
+    def owners_for(rikishi_id: int) -> list[OwnerOut]:
+        out: list[OwnerOut] = []
+        seen: set[uuid.UUID] = set()
         for e in entries:
             if e.rikishi_id != rikishi_id:
                 continue
@@ -153,10 +155,13 @@ async def get_day(
                 continue
             if e.released_before_day is not None and e.released_before_day <= day:
                 continue
+            if e.participant_user_id in seen:
+                continue
+            seen.add(e.participant_user_id)
             u = users.get(e.participant_user_id)
             if u:
-                return OwnerOut(user_id=str(u.id), display_name=u.display_name)
-        return None
+                out.append(OwnerOut(user_id=str(u.id), display_name=u.display_name))
+        return out
 
     # Hydrate rikishi names in one go.
     name_rows = (
@@ -176,10 +181,10 @@ async def get_day(
             match_id=m.id,
             rikishi1_id=m.rikishi1_id,
             rikishi1_name=name_by_id.get(m.rikishi1_id),
-            rikishi1_owner=owner_for(m.rikishi1_id),
+            rikishi1_owners=owners_for(m.rikishi1_id),
             rikishi2_id=m.rikishi2_id,
             rikishi2_name=name_by_id.get(m.rikishi2_id),
-            rikishi2_owner=owner_for(m.rikishi2_id),
+            rikishi2_owners=owners_for(m.rikishi2_id),
             winner_id=m.winner_id,
             kimarite=m.kimarite,
         )

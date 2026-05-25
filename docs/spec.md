@@ -12,7 +12,8 @@ as read-only snapshots. The next basho is the primary target.
 ### Scoring rules (recap)
 
 For each tournament, every participant picks 4 rikishi from Makuuchi with a
-£55 total budget. Points are awarded as follows:
+£55 total budget. The budget is fixed and not configurable per-tournament.
+Points are awarded as follows:
 
 | Event                                                  | Points |
 | ------------------------------------------------------ | ------ |
@@ -33,6 +34,41 @@ note: the sumo-api flags playoff matches with `day=16` (or sometimes
 `day=15` with a separate marker); we'll need to inspect a recent basho
 with a playoff and filter playoff matches out of the win/scalp counts in
 the scoring engine.
+
+### Rikishi pricing
+
+Prices are derived from each rikishi's banzuke rank for the tournament's
+basho. Defaults are seeded automatically the first time the rikishi list
+is loaded; the admin can still override individual prices in the admin
+console during `setup`/`drafting`.
+
+| Rank                          | Price |
+| ----------------------------- | ----- |
+| Yokozuna (east or west)       | £30   |
+| Ozeki (east or west)          | £25   |
+| Sekiwake (east or west)       | £22   |
+| Komusubi (east or west)       | £20   |
+| Maegashira N east or west     | £(18 − N) |
+
+That gives M1e/M1w £17 down to M17e/M17w £1.
+
+### Shared picks
+
+Two or more participants are allowed to own the same rikishi at the same
+time. The rules are:
+
+1. **Pair overlap.** Any two participants may share at most **2** rikishi.
+2. **Owner count.** During `setup`/`drafting`, a single rikishi may be
+   picked by at most **2** participants. Once `active` (trading is open),
+   that cap relaxes to **3** participants.
+
+These limits are surfaced as **warnings** on the pick/trade endpoints; the
+admin can override and proceed if everyone in the league has agreed. Each
+participant can still only own a given rikishi once.
+
+When a rikishi is shared, the scoring engine awards 2 points for the win
+to **every** owner on that day. Scalp bonuses (+1) also accumulate per
+distinct loser-owner that isn't the same participant as the winner-owner.
 
 ### Trading
 
@@ -121,8 +157,9 @@ New tables for the fantasy app:
 | ------------- | ----------- | ------------------------------------------ |
 | id            | uuid PK     |                                            |
 | basho_id      | text FK     | references `basho.id`                      |
+| name          | text        | derived from basho on create (no separate league name) |
 | status        | text        | `setup` \| `drafting` \| `active` \| `archived` |
-| budget_pence  | int         | default 5500 (£55.00) — pence to avoid floats |
+| budget_pence  | int         | always 5500 (£55.00) — fixed by the rules  |
 | roster_size   | int         | default 4                                  |
 | created_at    | timestamptz |                                            |
 
@@ -138,7 +175,9 @@ Exactly one tournament has status in (`drafting`, `active`) at a time
 | PRIMARY KEY (tournament_id, user_id)                              |
 
 ### `rikishi_price`
-Set by admin before the draft. One row per (tournament, rikishi).
+Seeded from the rank-based default table when the rikishi list is first
+loaded for a tournament; admin can override individual rows before the
+draft. One row per (tournament, rikishi).
 | column         | type    | notes                                  |
 | -------------- | ------- | -------------------------------------- |
 | tournament_id  | uuid FK |                                        |
@@ -164,7 +203,9 @@ closes one entry and opens another. The active roster is
 | created_at              | timestamptz |                                   |
 
 Invariant: per (tournament, participant) at most `roster_size` entries
-with `released_before_day IS NULL`.
+with `released_before_day IS NULL`. Two participants **can** hold the
+same rikishi simultaneously; the limits in "Shared picks" above are
+soft warnings, not DB constraints.
 
 ### `trade`
 Audit record. One row per swap; references two `roster_entry` rows.
@@ -225,8 +266,11 @@ from win/scalp counts entirely** (regardless of `through_day`).
 
 Ownership at a given day is derived from `roster_entry`: the entry is
 owned on day `d` iff `acquired_before_day <= d AND (released_before_day
-IS NULL OR released_before_day > d)`. Scalp bonuses use ownership on the
-day of the match for both winner and loser.
+IS NULL OR released_before_day > d)`. A rikishi may have more than one
+owner on the same day (see "Shared picks"); every owner of the winner
+receives the 2-point win bonus, and every (winner-owner, loser-owner)
+pair contributes a +1 scalp bonus to the winner-owner unless both
+participants are the same person.
 
 ## 6. API surface
 
@@ -250,12 +294,15 @@ POST   /api/tournaments/{id}/status              (admin) drafting/active/archive
 
 GET    /api/tournaments/{id}/participants
 POST   /api/tournaments/{id}/participants        (admin) create viewer user + participant
+DELETE /api/tournaments/{id}/participants/{uid}  (admin) remove a participant (setup only)
 
 GET    /api/tournaments/{id}/rikishi             list of Makuuchi rikishi w/ prices
+                                                  (defaults from rank are seeded on first read)
 PUT    /api/tournaments/{id}/rikishi/{rid}/price (admin)
 
-GET    /api/tournaments/{id}/picks
-POST   /api/tournaments/{id}/picks               (admin) record a draft pick
+GET    /api/tournaments/{id}/picks               returns rosters and any sharing-rule warnings
+POST   /api/tournaments/{id}/picks               (admin) record a draft pick; pass force=true to
+                                                  bypass sharing-rule warnings
 
 GET    /api/tournaments/{id}/trades
 POST   /api/tournaments/{id}/trades              (admin) record a trade

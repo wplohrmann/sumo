@@ -58,10 +58,18 @@ export interface ParticipantRoster {
   entries: RosterEntry[];
 }
 
+export interface SharingWarning {
+  code: "rikishi_over_capped" | "pair_overlap_over_capped";
+  message: string;
+  rikishi_id: number | null;
+  user_ids: string[] | null;
+}
+
 export interface RosterBoard {
   budget_pence: number;
   roster_size: number;
   rosters: ParticipantRoster[];
+  warnings: SharingWarning[];
 }
 
 export interface DayBreakdown {
@@ -93,10 +101,10 @@ export interface DayMatch {
   match_id: string;
   rikishi1_id: number;
   rikishi1_name: string | null;
-  rikishi1_owner: Owner | null;
+  rikishi1_owners: Owner[];
   rikishi2_id: number;
   rikishi2_name: string | null;
-  rikishi2_owner: Owner | null;
+  rikishi2_owners: Owner[];
   winner_id: number | null;
   kimarite: string | null;
 }
@@ -132,6 +140,26 @@ export interface Trade {
 
 const BASE = "/api";
 
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+  warnings: SharingWarning[] | null;
+
+  constructor(status: number, statusText: string, detail: unknown) {
+    const detailText =
+      typeof detail === "string" ? detail : JSON.stringify(detail);
+    super(`${status} ${statusText}: ${detailText}`);
+    this.status = status;
+    this.detail = detail;
+    this.warnings =
+      detail &&
+      typeof detail === "object" &&
+      (detail as { code?: string }).code === "sharing_warning"
+        ? ((detail as { warnings: SharingWarning[] }).warnings ?? [])
+        : null;
+  }
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -145,8 +173,14 @@ async function request<T>(
     ...init,
   });
   if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
+    let detail: unknown;
+    try {
+      const body = await resp.json();
+      detail = body?.detail ?? body;
+    } catch {
+      detail = await resp.text().catch(() => "");
+    }
+    throw new ApiError(resp.status, resp.statusText, detail);
   }
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
@@ -175,8 +209,6 @@ export const api = {
   listTournaments: () => request<Tournament[]>("/tournaments"),
   createTournament: (body: {
     basho_id: string;
-    name: string;
-    budget_pence?: number;
     roster_size?: number;
   }) =>
     request<Tournament>("/tournaments", {
@@ -196,6 +228,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ display_name }),
     }),
+  removeParticipant: (tid: string, user_id: string) =>
+    request<void>(`/tournaments/${tid}/participants/${user_id}`, {
+      method: "DELETE",
+    }),
 
   listRikishi: (tid: string) =>
     request<RikishiRow[]>(`/tournaments/${tid}/rikishi`),
@@ -206,10 +242,15 @@ export const api = {
     }),
 
   listPicks: (tid: string) => request<RosterBoard>(`/tournaments/${tid}/picks`),
-  createPick: (tid: string, participant_user_id: string, rikishi_id: number) =>
+  createPick: (
+    tid: string,
+    participant_user_id: string,
+    rikishi_id: number,
+    force = false,
+  ) =>
     request<RosterEntry>(`/tournaments/${tid}/picks`, {
       method: "POST",
-      body: JSON.stringify({ participant_user_id, rikishi_id }),
+      body: JSON.stringify({ participant_user_id, rikishi_id, force }),
     }),
   deletePick: (tid: string, entry_id: string) =>
     request<void>(`/tournaments/${tid}/picks/${entry_id}`, {
@@ -259,6 +300,7 @@ export const api = {
       buy_rikishi_id: number;
       effective_before_day: number;
       note?: string | null;
+      force?: boolean;
     },
   ) =>
     request<Trade>(`/tournaments/${tid}/trades`, {

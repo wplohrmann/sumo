@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { useParticipants, usePicks, useRikishi } from "../api/hooks";
 import { pence } from "../lib/money";
 
@@ -13,22 +13,43 @@ export default function PickEntry({ tid }: { tid: string }) {
   const [participant, setParticipant] = useState<string>("");
   const [rikishiId, setRikishiId] = useState<string>("");
 
-  const ownedIds = useMemo(() => {
-    const ids = new Set<number>();
-    picks.data?.rosters.forEach((r) =>
-      r.entries.forEach((e) => ids.add(e.rikishi_id)),
-    );
-    return ids;
+  const ownedByParticipant = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    picks.data?.rosters.forEach((r) => {
+      map.set(r.user_id, new Set(r.entries.map((e) => e.rikishi_id)));
+    });
+    return map;
   }, [picks.data]);
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createPick(tid, participant, Number(rikishiId)),
+    mutationFn: ({ force }: { force: boolean }) =>
+      api.createPick(tid, participant, Number(rikishiId), force),
     onSuccess: () => {
       setRikishiId("");
       qc.invalidateQueries({ queryKey: ["tournaments", tid, "picks"] });
     },
   });
+
+  const submitPick = () => {
+    if (!participant || !rikishiId) return;
+    create.mutate(
+      { force: false },
+      {
+        onError: (err) => {
+          if (err instanceof ApiError && err.warnings) {
+            const lines = err.warnings.map((w) => `• ${w.message}`).join("\n");
+            if (
+              window.confirm(
+                `Sharing rule warning:\n\n${lines}\n\nProceed anyway?`,
+              )
+            ) {
+              create.mutate({ force: true });
+            }
+          }
+        },
+      },
+    );
+  };
 
   const deletePick = useMutation({
     mutationFn: (entryId: string) => api.deletePick(tid, entryId),
@@ -46,7 +67,7 @@ export default function PickEntry({ tid }: { tid: string }) {
         className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          if (participant && rikishiId) create.mutate();
+          submitPick();
         }}
       >
         <select
@@ -70,7 +91,14 @@ export default function PickEntry({ tid }: { tid: string }) {
         >
           <option value="">— rikishi —</option>
           {rikishi.data
-            ?.filter((r) => r.price_pence != null && !ownedIds.has(r.rikishi_id))
+            ?.filter(
+              (r) =>
+                r.price_pence != null &&
+                !(
+                  participant &&
+                  ownedByParticipant.get(participant)?.has(r.rikishi_id)
+                ),
+            )
             .map((r) => (
               <option key={r.rikishi_id} value={r.rikishi_id}>
                 {r.name} ({r.rank}) — {pence(r.price_pence!)}
@@ -90,10 +118,22 @@ export default function PickEntry({ tid }: { tid: string }) {
           Price: {pence(selectedPrice)}
         </p>
       )}
-      {create.isError && (
-        <p className="text-sm text-red-600">
-          {(create.error as Error).message}
-        </p>
+      {create.isError &&
+        !(create.error instanceof ApiError && create.error.warnings) && (
+          <p className="text-sm text-red-600">
+            {(create.error as Error).message}
+          </p>
+        )}
+
+      {picks.data?.warnings && picks.data.warnings.length > 0 && (
+        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <p className="font-medium mb-1">Sharing rule warnings:</p>
+          <ul className="list-disc list-inside">
+            {picks.data.warnings.map((w, i) => (
+              <li key={i}>{w.message}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

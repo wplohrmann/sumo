@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import { useParticipants, usePicks, useRikishi } from "../api/hooks";
 import { pence } from "../lib/money";
 
@@ -22,12 +22,12 @@ export default function TradeAdmin({ tid }: { tid: string }) {
     return picks.data.rosters.find((r) => r.user_id === pid)?.entries ?? [];
   }, [pid, picks.data]);
 
-  const ownedNow = useMemo(() => {
-    const s = new Set<number>();
-    picks.data?.rosters.forEach((r) =>
-      r.entries.forEach((e) => s.add(e.rikishi_id)),
-    );
-    return s;
+  const ownedByParticipant = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    picks.data?.rosters.forEach((r) => {
+      map.set(r.user_id, new Set(r.entries.map((e) => e.rikishi_id)));
+    });
+    return map;
   }, [picks.data]);
 
   const selectedSell = sellableEntries.find((e) => e.id === sellEntryId);
@@ -39,13 +39,14 @@ export default function TradeAdmin({ tid }: { tid: string }) {
     : 0;
 
   const trade = useMutation({
-    mutationFn: () =>
+    mutationFn: ({ force }: { force: boolean }) =>
       api.createTrade(tid, {
         participant_user_id: pid,
         sell_entry_id: sellEntryId,
         buy_rikishi_id: Number(buyRikishiId),
         effective_before_day: day,
         note: note || null,
+        force,
       }),
     onSuccess: () => {
       setSellEntryId("");
@@ -55,12 +56,33 @@ export default function TradeAdmin({ tid }: { tid: string }) {
     },
   });
 
+  const submitTrade = () => {
+    if (!pid || !sellEntryId || !buyRikishiId) return;
+    trade.mutate(
+      { force: false },
+      {
+        onError: (err) => {
+          if (err instanceof ApiError && err.warnings) {
+            const lines = err.warnings.map((w) => `• ${w.message}`).join("\n");
+            if (
+              window.confirm(
+                `Sharing rule warning:\n\n${lines}\n\nProceed anyway?`,
+              )
+            ) {
+              trade.mutate({ force: true });
+            }
+          }
+        },
+      },
+    );
+  };
+
   return (
     <form
       className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (pid && sellEntryId && buyRikishiId) trade.mutate();
+        submitTrade();
       }}
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -114,7 +136,9 @@ export default function TradeAdmin({ tid }: { tid: string }) {
           <option value="">— buy which rikishi —</option>
           {rikishi.data
             ?.filter(
-              (r) => r.price_pence != null && !ownedNow.has(r.rikishi_id),
+              (r) =>
+                r.price_pence != null &&
+                !(pid && ownedByParticipant.get(pid)?.has(r.rikishi_id)),
             )
             .map((r) => (
               <option key={r.rikishi_id} value={r.rikishi_id}>
@@ -142,9 +166,12 @@ export default function TradeAdmin({ tid }: { tid: string }) {
       >
         Record trade
       </button>
-      {trade.isError && (
-        <p className="text-sm text-red-600">{(trade.error as Error).message}</p>
-      )}
+      {trade.isError &&
+        !(trade.error instanceof ApiError && trade.error.warnings) && (
+          <p className="text-sm text-red-600">
+            {(trade.error as Error).message}
+          </p>
+        )}
     </form>
   );
 }

@@ -55,8 +55,12 @@ class ParticipantStanding:
     by_day: list[DayBreakdown] = field(default_factory=list)
 
 
-def _entry_owner_on_day(entries: list[RosterEntry], rikishi_id: int, day: int) -> uuid.UUID | None:
-    """Return participant_user_id owning `rikishi_id` on `day`, or None."""
+def _entry_owners_on_day(
+    entries: list[RosterEntry], rikishi_id: int, day: int
+) -> list[uuid.UUID]:
+    """All participants owning `rikishi_id` on `day` (shared picks allowed)."""
+    out: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
     for e in entries:
         if e.rikishi_id != rikishi_id:
             continue
@@ -64,8 +68,11 @@ def _entry_owner_on_day(entries: list[RosterEntry], rikishi_id: int, day: int) -
             continue
         if e.released_before_day is not None and e.released_before_day <= day:
             continue
-        return e.participant_user_id
-    return None
+        if e.participant_user_id in seen:
+            continue
+        seen.add(e.participant_user_id)
+        out.append(e.participant_user_id)
+    return out
 
 
 async def compute_standings(
@@ -115,14 +122,16 @@ async def compute_standings(
     for m in matches:
         if m.winner_id is None:
             continue
-        winner_owner = _entry_owner_on_day(entries, m.winner_id, m.day)
+        winner_owners = _entry_owners_on_day(entries, m.winner_id, m.day)
         loser_id = (
             m.rikishi2_id if m.winner_id == m.rikishi1_id else m.rikishi1_id
         )
-        loser_owner = _entry_owner_on_day(entries, loser_id, m.day)
-        if winner_owner is not None:
+        loser_owners = set(_entry_owners_on_day(entries, loser_id, m.day))
+        for winner_owner in winner_owners:
             by_user_day[winner_owner][m.day]["wins"] += 1
-            if loser_owner is not None and loser_owner != winner_owner:
+            for loser_owner in loser_owners:
+                if loser_owner == winner_owner:
+                    continue
                 by_user_day[winner_owner][m.day]["scalps"] += 1
 
     # Adjustments
@@ -156,15 +165,14 @@ async def compute_standings(
             )
         ).all()
         for a in awards:
-            owner = _entry_owner_on_day(entries, a.rikishi_id, REGULAR_DAYS)
-            if owner is None:
-                continue
-            if a.kind == "yusho":
-                award_totals[owner] += YUSHO_POINTS
-            elif a.kind == "playoff":
-                award_totals[owner] += PLAYOFF_POINTS
-            elif a.kind in SANSHO_KINDS:
-                award_totals[owner] += SANSHO_POINTS
+            owners = _entry_owners_on_day(entries, a.rikishi_id, REGULAR_DAYS)
+            for owner in owners:
+                if a.kind == "yusho":
+                    award_totals[owner] += YUSHO_POINTS
+                elif a.kind == "playoff":
+                    award_totals[owner] += PLAYOFF_POINTS
+                elif a.kind in SANSHO_KINDS:
+                    award_totals[owner] += SANSHO_POINTS
 
     standings: list[ParticipantStanding] = []
     for user in participants:
