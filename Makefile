@@ -13,7 +13,7 @@ help:
 	@echo "  lint            ruff + black check"
 
 install:
-	cd backend && pip install -e ".[dev]"
+	cd backend && uv sync --all-extras
 	cd frontend && npm install
 
 db-up:
@@ -23,19 +23,19 @@ db-down:
 	docker compose down
 
 migrate:
-	cd backend && alembic upgrade head
+	cd backend && uv run alembic upgrade head
 
 makemigration:
-	cd backend && alembic revision --autogenerate -m "$(m)"
+	cd backend && uv run alembic revision --autogenerate -m "$(m)"
 
 backend:
-	cd backend && uvicorn app.main:app --reload --port 8000
+	cd backend && uv run uvicorn app.main:app --reload --port 8000
 
 frontend:
 	cd frontend && npm run dev
 
 test:
-	cd backend && pytest -q
+	cd backend && uv run pytest -q
 
 lint:
-	cd backend && ruff check . && black --check .
+	cd backend && uv run ruff check . && uv run black --check .
