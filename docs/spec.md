@@ -305,8 +305,9 @@ mid-day to pick up newly recorded bouts is safe.
 
 ## 9. Open questions / v2
 
-- **Live scoring during the day** — for now the cron polls hourly. If we
-  want bout-by-bout live updates, we'd add WebSockets and a faster poll.
+- **Live scoring during the day** — sync is admin-triggered today. If we
+  want bout-by-bout live updates, we'd add WebSockets and a background
+  poller.
 - **Rikishi pricing UX** — admin sets prices manually. Possible v2: auto-
   suggest based on rank (yokozuna/ozeki priced higher).
 - **Public leaderboard share link** — read-only URL for showing off.
