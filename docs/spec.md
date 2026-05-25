@@ -238,6 +238,11 @@ POST   /api/auth/login              {token}     -> sets cookie
 POST   /api/auth/logout
 GET    /api/me
 
+GET    /api/bashos/recent              the 10 most recent basho IDs (computed
+                                        from today's date), each annotated with
+                                        whether it's already synced — used to
+                                        populate admin dropdowns
+
 GET    /api/tournaments/current
 GET    /api/tournaments/{id}
 POST   /api/tournaments                          (admin) create

@@ -1,18 +1,42 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import { useCurrentTournament, useParticipants } from "../api/hooks";
+import { api, type RecentBasho } from "../api/client";
+import {
+  useCurrentTournament,
+  useParticipants,
+  useRecentBashos,
+} from "../api/hooks";
 import PricingTable from "../components/PricingTable";
 import PickEntry from "../components/PickEntry";
 import AdjustmentsAdmin from "../components/AdjustmentsAdmin";
 import AwardsAdmin from "../components/AwardsAdmin";
 import TradeAdmin from "../components/TradeAdmin";
 
+const BASHO_NICKNAMES: Record<number, string> = {
+  1: "Hatsu",
+  3: "Haru",
+  5: "Natsu",
+  7: "Nagoya",
+  9: "Aki",
+  11: "Kyushu",
+};
+
+function bashoLabel(b: RecentBasho): string {
+  const year = b.id.slice(0, 4);
+  const month = parseInt(b.id.slice(4, 6), 10);
+  const nickname = BASHO_NICKNAMES[month] ?? b.id.slice(4, 6);
+  const base = `${nickname} ${year}`;
+  if (!b.synced) return `${base} — not synced`;
+  if (b.name) return `${base} — ${b.name}`;
+  return base;
+}
+
 export default function Admin() {
   const t = useCurrentTournament();
   const qc = useQueryClient();
   const participants = useParticipants(t.data?.id);
+  const bashos = useRecentBashos();
 
   const [syncBasho, setSyncBasho] = useState("");
   const [tournamentBasho, setTournamentBasho] = useState("");
@@ -21,8 +45,21 @@ export default function Admin() {
   const [participantName, setParticipantName] = useState("");
   const [lastToken, setLastToken] = useState<string | null>(null);
 
+  // Seed dropdown defaults from the recent-bashos list once it loads.
+  useEffect(() => {
+    if (!bashos.data) return;
+    if (!syncBasho && bashos.data.length > 0) {
+      setSyncBasho(bashos.data[0].id);
+    }
+    if (!tournamentBasho) {
+      const firstSynced = bashos.data.find((b) => b.synced);
+      if (firstSynced) setTournamentBasho(firstSynced.id);
+    }
+  }, [bashos.data, syncBasho, tournamentBasho]);
+
   const sync = useMutation({
     mutationFn: (basho_id: string) => api.sync(basho_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["bashos", "recent"] }),
   });
 
   const createT = useMutation({
@@ -54,8 +91,8 @@ export default function Admin() {
       <section>
         <h2 className="text-xl font-semibold mb-2">Sync from sumo-api</h2>
         <p className="text-sm text-stone-600 mb-2">
-          Pulls Makuuchi banzuke + matches for the given basho id (e.g.{" "}
-          <code>202405</code>). Idempotent; safe to run multiple times.
+          Pulls Makuuchi banzuke + matches for the selected basho. Idempotent;
+          safe to run multiple times.
         </p>
         <form
           className="flex gap-2"
@@ -64,15 +101,22 @@ export default function Admin() {
             if (syncBasho) sync.mutate(syncBasho);
           }}
         >
-          <input
-            className="flex-1 rounded border border-stone-300 px-3 py-2"
-            placeholder="basho id (YYYYMM)"
+          <select
+            className="flex-1 rounded border border-stone-300 px-3 py-2 bg-white"
             value={syncBasho}
             onChange={(e) => setSyncBasho(e.target.value)}
-          />
+            disabled={!bashos.data || bashos.data.length === 0}
+          >
+            {!bashos.data && <option value="">Loading…</option>}
+            {bashos.data?.map((b) => (
+              <option key={b.id} value={b.id}>
+                {bashoLabel(b)}
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
-            disabled={sync.isPending}
+            disabled={sync.isPending || !syncBasho}
             className="px-4 py-2 bg-stone-800 text-white rounded disabled:opacity-50"
           >
             {sync.isPending ? "Syncing…" : "Sync"}
@@ -102,12 +146,22 @@ export default function Admin() {
               });
             }}
           >
-            <input
-              className="block w-full rounded border border-stone-300 px-3 py-2"
-              placeholder="basho id (must be synced first)"
+            <select
+              className="block w-full rounded border border-stone-300 px-3 py-2 bg-white"
               value={tournamentBasho}
               onChange={(e) => setTournamentBasho(e.target.value)}
-            />
+              disabled={!bashos.data}
+            >
+              {!bashos.data && <option value="">Loading…</option>}
+              {bashos.data && !bashos.data.some((b) => b.synced) && (
+                <option value="">Sync a basho first</option>
+              )}
+              {bashos.data?.map((b) => (
+                <option key={b.id} value={b.id} disabled={!b.synced}>
+                  {bashoLabel(b)}
+                </option>
+              ))}
+            </select>
             <input
               className="block w-full rounded border border-stone-300 px-3 py-2"
               placeholder="league name"

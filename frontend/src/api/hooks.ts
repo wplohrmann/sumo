@@ -33,6 +33,14 @@ export function useCurrentTournament() {
   });
 }
 
+export function useRecentBashos() {
+  return useQuery({
+    queryKey: ["bashos", "recent"],
+    queryFn: () => api.recentBashos(),
+    staleTime: 60_000,
+  });
+}
+
 export function useParticipants(tid: string | undefined) {
   return useQuery({
     queryKey: ["tournaments", tid, "participants"],

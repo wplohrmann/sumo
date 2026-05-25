@@ -16,6 +16,14 @@ export interface Tournament {
   roster_size: number;
 }
 
+export interface RecentBasho {
+  id: string;
+  synced: boolean;
+  name: string | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
 export interface Participant {
   user_id: string;
   display_name: string;
@@ -157,6 +165,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ spoiler_day: day }),
     }),
+
+  recentBashos: () => request<RecentBasho[]>("/bashos/recent"),
 
   currentTournament: () =>
     request<Tournament | null>("/tournaments/current"),
