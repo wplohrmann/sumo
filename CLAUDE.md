@@ -33,13 +33,6 @@ A staging area for design decisions made during implementation that aren't alrea
 - **Format**: one short section per decision. Title, context, the choice taken, the alternative(s) considered, why.
 - **Lifecycle**: the user reviews entries. Once an entry is approved, **delete it from `decisions.md`** and (if it changed how the system works) fold the new behavior into `spec.md` or `plan.md`. The file should slowly empty itself as things get reviewed.
 
-## Branching and commits
-
-- All work lives on a branch named **`phase-<n>-<short-description>`** matching the phase in `docs/plan.md` (e.g. `phase-2-api-ui-thin-slice`).
-- **Never push directly to `main`.**
-- **Never rewrite history** on shared branches: no force-push, no rebase of pushed commits, no `--amend` after push.
-- Don't commit unless the user explicitly asks.
-
 ## Tests
 
 - Write tests whenever they meaningfully pin behavior. This is partially how the spec is enforced — when ranker behavior, parser robustness, or API contracts drift, tests should catch it.
