@@ -72,6 +72,17 @@ def _parse_date(value: str | None) -> date | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
 
 
+def _parse_basho_month(value: str | None) -> date | None:
+    """sumo-api returns a rikishi's `debut` as a basho id (YYYYMM), not a real
+    date. Map it to the first of that month so we can store it as a Date."""
+    if not value:
+        return None
+    s = str(value)
+    if len(s) == 6 and s.isdigit():
+        return date(int(s[:4]), int(s[4:]), 1)
+    return None
+
+
 async def sync_basho(session: AsyncSession, api: SumoApiClient, basho_id: str) -> None:
     exists = await session.scalar(select(Basho).where(Basho.id == basho_id))
     if exists:
@@ -150,7 +161,7 @@ async def sync_rikishi_details(
                 {
                     "id": data.get("id"),
                     "name": data.get("shikonaEn"),
-                    "debut_date": _parse_date(data.get("debut")),
+                    "debut_date": _parse_basho_month(data.get("debut")),
                     "birth_date": _parse_date(data.get("birthDate")),
                 },
             )
