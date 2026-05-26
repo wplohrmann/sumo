@@ -103,6 +103,20 @@ async def create_tournament(
             status_code=status.HTTP_409_CONFLICT,
             detail="archive the current tournament first",
         )
+    # One tournament per basho — if this basho already has an (archived)
+    # tournament, point the admin at unarchiving rather than letting them
+    # silently create a duplicate.
+    same_basho = await session.scalar(
+        select(Tournament).where(Tournament.basho_id == body.basho_id)
+    )
+    if same_basho is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"a tournament already exists for {body.basho_id} — "
+                "unarchive it instead of creating a new one"
+            ),
+        )
     t = Tournament(
         basho_id=body.basho_id,
         name=_derive_name(basho),
@@ -131,6 +145,18 @@ async def update_status(
     t = await session.get(Tournament, tournament_id)
     if t is None:
         raise HTTPException(status_code=404, detail="tournament not found")
+    if t.status == "archived" and body.status != "archived":
+        other = await session.scalar(
+            select(Tournament).where(
+                Tournament.status != "archived",
+                Tournament.id != tournament_id,
+            )
+        )
+        if other is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="archive the current tournament before unarchiving another",
+            )
     t.status = body.status
     await session.commit()
     await session.refresh(t)
@@ -211,19 +237,33 @@ async def add_participant(
     existing = await session.scalar(
         select(AppUser).where(AppUser.display_name == display_name)
     )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="display_name already in use",
-        )
     token = new_viewer_token()
-    user = AppUser(
-        display_name=display_name,
-        role="viewer",
-        token_hash=hash_token(token),
-    )
-    session.add(user)
-    await session.flush()
+    if existing is not None:
+        if existing.role != "viewer":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"'{display_name}' is already in use by the admin",
+            )
+        already = await session.get(
+            TournamentParticipant, (tournament_id, existing.id)
+        )
+        if already is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"'{display_name}' is already a participant in this tournament",
+            )
+        # Returning viewer from a previous tournament — reuse the account,
+        # rotate their token so the admin can share a fresh one.
+        existing.token_hash = hash_token(token)
+        user = existing
+    else:
+        user = AppUser(
+            display_name=display_name,
+            role="viewer",
+            token_hash=hash_token(token),
+        )
+        session.add(user)
+        await session.flush()
     session.add(
         TournamentParticipant(tournament_id=tournament_id, user_id=user.id)
     )

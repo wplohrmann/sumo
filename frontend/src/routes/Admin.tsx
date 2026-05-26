@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api, type RecentBasho } from "../api/client";
 import {
+  useAllTournaments,
   useCurrentTournament,
   useParticipants,
   useRecentBashos,
@@ -37,11 +38,16 @@ export default function Admin() {
   const qc = useQueryClient();
   const participants = useParticipants(t.data?.id);
   const bashos = useRecentBashos();
+  const allTournaments = useAllTournaments();
 
   const [syncBasho, setSyncBasho] = useState("");
   const [tournamentBasho, setTournamentBasho] = useState("");
   const [participantName, setParticipantName] = useState("");
   const [lastToken, setLastToken] = useState<string | null>(null);
+
+  const usedBashoIds = new Set(
+    allTournaments.data?.map((x) => x.basho_id) ?? [],
+  );
 
   // Seed dropdown defaults from the recent-bashos list once it loads.
   useEffect(() => {
@@ -50,10 +56,12 @@ export default function Admin() {
       setSyncBasho(bashos.data[0].id);
     }
     if (!tournamentBasho) {
-      const firstSynced = bashos.data.find((b) => b.synced);
-      if (firstSynced) setTournamentBasho(firstSynced.id);
+      const firstAvailable = bashos.data.find(
+        (b) => b.synced && !usedBashoIds.has(b.id),
+      );
+      if (firstAvailable) setTournamentBasho(firstAvailable.id);
     }
-  }, [bashos.data, syncBasho, tournamentBasho]);
+  }, [bashos.data, syncBasho, tournamentBasho, allTournaments.data]);
 
   const sync = useMutation({
     mutationFn: (basho_id: string) => api.sync(basho_id),
@@ -68,6 +76,11 @@ export default function Admin() {
   const addP = useMutation({
     mutationFn: ({ tid, name }: { tid: string; name: string }) =>
       api.addParticipant(tid, name),
+    onMutate: () => {
+      // Drop any previous success token so it doesn't sit there next to an
+      // error message from a later attempt.
+      setLastToken(null);
+    },
     onSuccess: (data) => {
       setLastToken(data.token);
       setParticipantName("");
@@ -93,7 +106,18 @@ export default function Admin() {
   const updateStatus = useMutation({
     mutationFn: (status: "setup" | "drafting" | "active" | "archived") =>
       api.setTournamentStatus(t.data!.id, status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tournaments", "current"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tournaments", "current"] });
+      qc.invalidateQueries({ queryKey: ["tournaments", "all"] });
+    },
+  });
+
+  const unarchive = useMutation({
+    mutationFn: (id: string) => api.setTournamentStatus(id, "active"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tournaments", "current"] });
+      qc.invalidateQueries({ queryKey: ["tournaments", "all"] });
+    },
   });
 
   return (
@@ -142,6 +166,41 @@ export default function Admin() {
         )}
       </section>
 
+      {allTournaments.data && allTournaments.data.some((x) => x.status === "archived") && (
+        <section>
+          <h2 className="text-xl font-semibold mb-2">Archived tournaments</h2>
+          <p className="text-sm text-stone-600 mb-2">
+            {t.data
+              ? "Archive the current tournament first to restore one of these."
+              : "Restore an archived tournament to make it current again."}
+          </p>
+          <ul className="space-y-1">
+            {allTournaments.data
+              .filter((x) => x.status === "archived")
+              .map((x) => (
+                <li
+                  key={x.id}
+                  className="flex items-center justify-between gap-2 border border-stone-200 rounded px-3 py-2"
+                >
+                  <span>{x.name}</span>
+                  <button
+                    onClick={() => unarchive.mutate(x.id)}
+                    disabled={unarchive.isPending || !!t.data}
+                    className="px-3 py-1 rounded border border-stone-300 hover:bg-stone-50 disabled:opacity-50"
+                  >
+                    Unarchive
+                  </button>
+                </li>
+              ))}
+          </ul>
+          {unarchive.isError && (
+            <p className="mt-2 text-sm text-red-600">
+              {(unarchive.error as Error).message}
+            </p>
+          )}
+        </section>
+      )}
+
       {!t.data && (
         <section>
           <h2 className="text-xl font-semibold mb-2">Create tournament</h2>
@@ -166,11 +225,21 @@ export default function Admin() {
               {bashos.data && !bashos.data.some((b) => b.synced) && (
                 <option value="">Sync a basho first</option>
               )}
-              {bashos.data?.map((b) => (
-                <option key={b.id} value={b.id} disabled={!b.synced}>
-                  {bashoLabel(b)}
-                </option>
-              ))}
+              {bashos.data?.map((b) => {
+                const used = usedBashoIds.has(b.id);
+                const label = used
+                  ? `${bashoLabel(b)} — already used`
+                  : bashoLabel(b);
+                return (
+                  <option
+                    key={b.id}
+                    value={b.id}
+                    disabled={!b.synced || used}
+                  >
+                    {label}
+                  </option>
+                );
+              })}
             </select>
             <button
               type="submit"
@@ -232,6 +301,11 @@ export default function Admin() {
                 Add
               </button>
             </form>
+            {addP.isError && (
+              <p className="mt-2 text-sm text-red-600">
+                {(addP.error as Error).message}
+              </p>
+            )}
             {lastToken && (
               <div className="mt-2 p-3 rounded bg-yellow-50 border border-yellow-200 text-sm">
                 <p className="font-medium">Token (shown once — copy now):</p>

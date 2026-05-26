@@ -156,7 +156,7 @@ New tables for the fantasy app:
 | column        | type        | notes                                      |
 | ------------- | ----------- | ------------------------------------------ |
 | id            | uuid PK     |                                            |
-| basho_id      | text FK     | references `basho.id`                      |
+| basho_id      | text FK     | references `basho.id`; unique (one tournament per basho) |
 | name          | text        | derived from basho on create (no separate league name) |
 | status        | text        | `setup` \| `drafting` \| `active` \| `archived` |
 | budget_pence  | int         | always 5500 (£55.00) — fixed by the rules  |
@@ -164,7 +164,9 @@ New tables for the fantasy app:
 | created_at    | timestamptz |                                            |
 
 Exactly one tournament has status in (`drafting`, `active`) at a time
-(enforced by a partial unique index).
+(enforced by a partial unique index). A given basho is used by at most one
+tournament; to re-run a basho, unarchive the existing tournament rather
+than creating a new one.
 
 ### `tournament_participant`
 | column         | type    | notes                                  |

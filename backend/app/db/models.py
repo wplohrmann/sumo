@@ -117,7 +117,7 @@ class Tournament(Base):
     __tablename__ = "tournament"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    basho_id: Mapped[str] = mapped_column(ForeignKey("basho.id"))
+    basho_id: Mapped[str] = mapped_column(ForeignKey("basho.id"), unique=True)
     name: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))  # 'setup' | 'drafting' | 'active' | 'archived'
     budget_pence: Mapped[int] = mapped_column(Integer, default=5500)

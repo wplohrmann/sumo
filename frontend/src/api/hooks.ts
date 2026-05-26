@@ -33,6 +33,13 @@ export function useCurrentTournament() {
   });
 }
 
+export function useAllTournaments() {
+  return useQuery({
+    queryKey: ["tournaments", "all"],
+    queryFn: () => api.listTournaments(),
+  });
+}
+
 export function useRecentBashos() {
   return useQuery({
     queryKey: ["bashos", "recent"],
